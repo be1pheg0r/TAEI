@@ -1,0 +1,10 @@
+# nano-vllm adapter settings; confirm hardware-dependent values on the target server.
+backend: nano_vllm
+model: ${model.path}
+
+tensor_parallel_size: 1
+gpu_memory_utilization: 0.90
+max_model_len: 4096
+max_num_batched_tokens: 16384
+max_num_seqs: 256
+enforce_eager: false

@@ -1,0 +1,6 @@
+# Dense Qwen3 8B checkpoint; override path on the inference server if needed.
+name: Qwen3-8B-dense
+family: qwen3
+architecture: dense
+huggingface_id: Qwen/Qwen3-8B
+path: ${oc.env:TAEI_QWEN3_8B_PATH,/models/Qwen3-8B}

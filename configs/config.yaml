@@ -1,0 +1,12 @@
+defaults:
+  - engine: nano_vllm
+  - model: qwen3_8b_dense
+  - experiment: smoke
+  - _self_
+
+seed: 42
+output_dir: outputs/${experiment.name}
+
+clearml:
+  enabled: false
+  project_name: TAEI
