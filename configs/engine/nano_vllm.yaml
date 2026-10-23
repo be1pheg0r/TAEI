@@ -1,6 +1,3 @@
-# Select the two 16 GiB RTX A4000s from nvidia-smi before starting Python:
-# CUDA_VISIBLE_DEVICES=1,2
-# The four 8 GiB Quadro RTX 4000s are intentionally excluded.
 backend: nano_vllm
 model: ${model.path}
 
