@@ -1,16 +1,21 @@
-# Configuration layout
+# Configuration and experiments
 
-- `configs/config.yaml` composes the default engine, model, and experiment groups.
-- `configs/engine/` holds backend and runtime settings; `nano_vllm.yaml` is the initial backend adapter.
-- `configs/model/` identifies a checkpoint and its local path; model choices are independent of engine settings.
-- `configs/experiment/` holds a named run's inputs and generation/evaluation choices. `smoke.yaml` is a placeholder.
+Hydra composes `configs/config.yaml` from the engine, model, and experiment groups. The default configuration now selects a CPU-safe dummy smoke experiment; it does not load a model, launch nano-vLLM, require a GPU, or connect to ClearML.
 
-This tree is a configuration scaffold, not an inference entry point. Set `TAEI_QWEN3_8B_PATH` to a downloaded model directory when the default path does not apply. The model group records upstream Qwen3-8B architecture metadata; nano-vllm reads the model's actual `config.json` from the selected directory.
+Run the default smoke experiment or the dedicated log-collection example from the repository root:
 
-Engine values are starting points, not benchmarked limits. Select appropriate devices for the host and validate memory use, context length, and concurrency with a smoke test before a real run. These configs do not launch a GPU job.
+```bash
+uv run python -m taei.run_experiment
+uv run python -m taei.run_experiment experiment=dummy
+uv run python -m taei.run_experiment experiment=dummy experiment.metrics.score=0.9
+```
 
-Hydra can select a group option and override values at launch, for example `model=qwen3_8b_dense engine.max_num_seqs=8`, once a Hydra-backed runner is added.
+The dummy experiment emits each configured metric through `taei.logging` and returns the metric mapping. It exists to exercise experiment construction and log collection, not to benchmark inference. Hydra writes its run metadata under its normal output directory; use `hydra.run.dir=...` to override that behavior.
 
-## Machine-specific notes
+Configuration groups:
 
-Host hardware selection, device indices, and tested or intended per-host launch settings are kept in the ignored `private_specs/` directory and are not part of the general project documentation.
+- `configs/engine/` contains backend settings. `nano_vllm.yaml` is available for future inference experiments; selecting it does not cause this dummy runner to import or start nano-vLLM.
+- `configs/model/` contains checkpoint metadata. Set `TAEI_QWEN3_8B_PATH` when a real model workflow needs a different local path.
+- `configs/experiment/` contains experiment classes and their inputs. Both `smoke.yaml` and `dummy.yaml` target `DummyExperiment` and run without external services.
+
+The current experiment runner deliberately treats the engine/model groups as configuration only. A future inference experiment should implement `taei.experiments.base.Experiment` and provide a Hydra `_target_` plus constructor fields in its experiment YAML. Host-specific device settings belong in the ignored `private_specs/` directory, not general docs.

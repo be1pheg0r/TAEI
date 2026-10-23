@@ -7,6 +7,9 @@ defaults:
 seed: 42
 output_dir: outputs/${experiment.name}
 
+logging:
+  level: INFO
+
 clearml:
   enabled: false
   project_name: TAEI

@@ -1,0 +1,6 @@
+name: dummy_log_collection
+_target_: taei.experiments.dummy.DummyExperiment
+description: Emit deterministic metrics to demonstrate experiment log collection.
+metrics:
+  examples_seen: 3
+  score: 0.75

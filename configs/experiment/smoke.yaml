@@ -1,11 +1,5 @@
 name: qwen3_8b_dense_smoke
-description: Minimal placeholder experiment for wiring the inference path.
-
-prompts:
-  - Replace this placeholder with a small, versioned input set.
-
-generation:
-  temperature: 0.6
-  max_tokens: 128
-
-# TODO: add dataset/split, evaluation, tracking, and repeat settings as needed.
+_target_: taei.experiments.dummy.DummyExperiment
+description: Minimal CPU-safe smoke experiment for validating Hydra and log collection.
+metrics:
+  smoke_checks: 1
