@@ -9,6 +9,8 @@ output_dir: outputs/${experiment.name}
 
 logging:
   level: INFO
+  markup: true
+  clearml: false
 
 clearml:
   enabled: false

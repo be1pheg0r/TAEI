@@ -1,11 +1,13 @@
 from pathlib import Path
 
+from clearml import Task
 from hydra import compose, initialize_config_dir
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
 from taei.experiments.base import Experiment
 from taei.logging import configure_logging
+from taei.run_experiment import initialize_clearml
 
 CONFIG_DIR = str(Path(__file__).resolve().parents[1] / "configs")
 
@@ -50,3 +52,23 @@ def test_dummy_experiment_collects_configured_metrics(capsys) -> None:
     output = capsys.readouterr().err
     assert "items_seen=3" in output
     assert "score=0.75" in output
+
+
+def test_clearml_enabled_initializes_task_for_log_forwarding(monkeypatch) -> None:
+    initialized = {}
+    monkeypatch.setattr(Task, "current_task", staticmethod(lambda: None))
+    monkeypatch.setattr(Task, "init", lambda **kwargs: initialized.update(kwargs))
+    cfg = OmegaConf.create(
+        {
+            "clearml": {"enabled": True, "project_name": "TAEI"},
+            "experiment": {"name": "dummy_run"},
+        }
+    )
+
+    initialize_clearml(cfg)
+
+    assert initialized == {
+        "project_name": "TAEI",
+        "task_name": "dummy_run",
+        "auto_connect_frameworks": False,
+    }

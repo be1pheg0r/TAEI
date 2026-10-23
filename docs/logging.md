@@ -47,4 +47,10 @@ def run(cfg):  # cfg is the fully composed Hydra DictConfig
 
 The package's existing `configure_logging(level="DEBUG")` call remains
 supported. An explicit `level` argument overrides the Hydra setting, which in
-turn overrides `TAEI_LOG_LEVEL` and the default `INFO` level.
+turn overrides `TAEI_LOG_LEVEL` and the default `INFO` level. In the Hydra
+runner, set `clearml.enabled: true` (for example,
+`uv run python -m taei.run_experiment experiment=dummy clearml.enabled=true`) to
+initialize a ClearML task before logging; this requires the usual ClearML
+credentials and API connectivity. The runner passes the full composed config to
+the logger, and any already-active task is forwarded to even when this setting
+is false.
