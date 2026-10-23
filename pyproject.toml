@@ -39,6 +39,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 taei = ["conf/**/*.yaml", "conf/*.yaml"]
+[tool.uv.extra-build-dependencies]
+flash-attn = [{ requirement = "torch", match-runtime = true }]
 
 [tool.pytest.ini_options]
 addopts = "-ra"
