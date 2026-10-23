@@ -1,11 +1,17 @@
-from taei.check_clearml import main
+import importlib.util
+from pathlib import Path
+
+SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "check_clearml.py"
+SPEC = importlib.util.spec_from_file_location("check_clearml", SCRIPT_PATH)
+assert SPEC is not None and SPEC.loader is not None
+check_clearml = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(check_clearml)
+main = check_clearml.main
 
 
 def test_check_clearml_authenticates_without_printing_credentials(
     monkeypatch, capsys
 ) -> None:
-    from taei import check_clearml
-
     monkeypatch.setattr(
         check_clearml,
         "dotenv_values",
@@ -39,8 +45,6 @@ def test_check_clearml_authenticates_without_printing_credentials(
 def test_check_clearml_reports_missing_credentials_without_connecting(
     monkeypatch, capsys
 ) -> None:
-    from taei import check_clearml
-
     monkeypatch.setattr(check_clearml, "dotenv_values", lambda _: {})
     monkeypatch.setattr(
         check_clearml,

@@ -5,7 +5,7 @@ from pathlib import Path
 from clearml.backend_api.session import Session
 from dotenv import dotenv_values
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_SETTINGS = (
     "CLEARML_API_HOST",
     "CLEARML_API_ACCESS_KEY",
