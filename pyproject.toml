@@ -32,6 +32,9 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+taei = ["conf/**/*.yaml", "conf/*.yaml"]
+
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]

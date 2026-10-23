@@ -1,0 +1,19 @@
+# Шаблон: скопируйте эту папку, затем измените описание, метрики и сценарий.
+# Цель примера: показать минимальный воспроизводимый CPU-сценарий без внешних данных.
+# Варьируйте iterations и value; ожидаемый synthetic_total равен их произведению.
+# После копирования замените этот расчёт вашей логикой и сохраните метрики словарём.
+defaults:
+  - base
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://taei.conf
+
+experiment:
+  name: replace_with_experiment_name
+  description: Runnable synthetic template; replace the scenario and description when copying this folder.
+
+metrics:
+  iterations: 3
+  value: 2

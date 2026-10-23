@@ -1,0 +1,18 @@
+# Цель: проверить сбор логов на детерминированных, заранее заданных метриках.
+# Варьируйте значения через CLI, например metrics.score=0.9.
+# Ожидаемый результат: те же ключи и новые значения появятся в results.json.
+defaults:
+  - base
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://taei.conf
+
+experiment:
+  name: dummy_log_collection
+  description: Emit deterministic metrics to demonstrate experiment log collection.
+
+metrics:
+  examples_seen: 3
+  score: 0.75

@@ -1,21 +1,41 @@
-# Configuration and experiments
+# Конфигурация и запуск экспериментов
 
-Hydra composes `configs/config.yaml` from the engine, model, and experiment groups. The default configuration now selects a CPU-safe dummy smoke experiment; it does not load a model, launch nano-vLLM, require a GPU, or connect to ClearML.
+Каждый запуск начинается из `experiments/<имя>/run.py`; рядом расположен его `config.yaml`. Скрипт задаёт Hydra `config_path='.'` и `config_name='config'`, поэтому конфигурация эксперимента загружается из его собственной папки. В начале локального YAML используются `defaults: [base, _self_]` и `hydra.searchpath: [pkg://taei.conf]`: `base` подключает общие настройки из пакета, `_self_` оставляет локальному файлу приоритет для его собственных значений.
 
-Run the default smoke experiment or the dedicated log-collection example from the repository root:
+## Владение настройками
+
+- `experiments/<имя>/config.yaml` — имя и описание эксперимента, его параметры и метрики. Здесь же оставляйте комментарии, поясняющие выборы конкретного запуска.
+- `src/taei/conf/base.yaml` — общие настройки запуска, seed, логирования, ClearML и Hydra. Настроенный seed инициализирует только Python `random`; сам по себе он не гарантирует воспроизводимость NumPy, PyTorch, GPU kernels или других генераторов.
+- `src/taei/conf/engine/` и `src/taei/conf/model/` — переиспользуемые метаданные backend и модели. Их конфигурация не означает, что процедура обязательно выполняет inference.
+- `experiments/<имя>/run.py` — шаги, уникальные для процедуры. Переиспользуемые действия выносите в код `src/taei/` только когда они действительно нужны более чем одному эксперименту.
+
+Числа и параметры процедуры задавайте в YAML, а не прячьте как настраиваемые константы в скрипте. Нет требования превращать каждую процедуру в класс или заранее обобщать одноразовый код.
+
+## Создание и запуск
+
+Скопируйте синтетический шаблон и отредактируйте конфигурацию и процедуру:
 
 ```bash
-uv run python -m taei.run_experiment
-uv run python -m taei.run_experiment experiment=dummy
-uv run python -m taei.run_experiment experiment=dummy experiment.metrics.score=0.9
+cp -r experiments/_template experiments/my_experiment
+uv run python experiments/my_experiment/run.py
 ```
 
-The dummy experiment emits each configured metric through `taei.logging` and returns the metric mapping. It exists to exercise experiment construction and log collection, not to benchmark inference. Hydra writes its run metadata under its normal output directory; use `hydra.run.dir=...` to override that behavior.
+Старый запуск через `python -m taei.run_experiment` удалён: запускайте процедуру по её пути, например `uv run python experiments/smoke/run.py`.
 
-Configuration groups:
+Готовые примеры:
 
-- `configs/engine/` contains backend settings. `nano_vllm.yaml` is available for future inference experiments; selecting it does not cause this dummy runner to import or start nano-vLLM.
-- `configs/model/` contains checkpoint metadata. Set `TAEI_QWEN3_8B_PATH` when a real model workflow needs a different local path.
-- `configs/experiment/` contains experiment classes and their inputs. Both `smoke.yaml` and `dummy.yaml` target `DummyExperiment` and run without external services.
+```bash
+uv run python experiments/smoke/run.py
+uv run python experiments/dummy/run.py metrics.score=0.9
+```
 
-The current experiment runner deliberately treats the engine/model groups as configuration only. A future inference experiment should implement `taei.experiments.base.Experiment` and provide a Hydra `_target_` plus constructor fields in its experiment YAML. Host-specific device settings belong in the ignored `private_specs/` directory, not general docs.
+`smoke` и `dummy` работают с синтетическими данными: они не загружают Qwen, не запускают nano-vLLM, не требуют GPU или сетевого доступа и не являются бенчмарками модели. Установка основных зависимостей: `uv sync`. Необязательная группа `inference` описана в `pyproject.toml`; для настоящего inference понадобятся соответствующий код и среда, и такой удалённый runtime здесь не проверен.
+
+Hydra поддерживает просмотр композиции и multirun, например:
+
+```bash
+uv run python experiments/dummy/run.py --cfg job
+uv run python experiments/dummy/run.py -m metrics.score=0.7,0.9
+```
+
+Переопределения применяются к ключам композиции; например, `metrics.score` — корневой параметр метрик, а не `experiment.metrics.score`. Hydra не меняет рабочую директорию (`chdir=false`). Одиночные запуски сохраняются в `outputs/<experiment.name>/<уникальный-каталог>/`; разрешённая конфигурация записывается как `config.yaml`, результат — как `results.json`. Каталоги multirun находятся в том же каталоге имени эксперимента и нумеруются Hydra.

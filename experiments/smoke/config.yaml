@@ -1,0 +1,18 @@
+# Цель: быстро проверить загрузку конфига, запуск сценария и сохранение результата.
+# Это синтетическая CPU-проверка: здесь нет генерации и бенчмарка инференса Qwen.
+# Варьируйте smoke_checks как число ожидаемых локальных проверок.
+# Ожидаемый результат: smoke_checks записывается в results.json без сети и GPU.
+defaults:
+  - base
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://taei.conf
+
+experiment:
+  name: qwen3_8b_dense_smoke
+  description: Synthetic CPU-safe smoke check for experiment configuration and output writing; not an inference benchmark.
+
+metrics:
+  smoke_checks: 1

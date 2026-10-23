@@ -1,26 +1,15 @@
-# Logging guidance for agents
+# Логирование и метрики
 
-Use `taei.logging.configure_logging` for application logging. Do not configure a
-second Loguru sink or create a competing project logging wrapper.
+Для текстовых сообщений используйте `taei.logging` — общий API проекта. Не добавляйте второй sink Loguru или конкурирующий проектный wrapper.
 
-- Configure once at the application entrypoint, after Hydra has composed its
-  `DictConfig` and before emitting application logs.
-- Keep logging options in Hydra configuration under `logging`; pass the full
-  composed config to `configure_logging(config=cfg)`. This package deliberately
-  does not depend on Hydra, so unit tests and non-Hydra scripts can pass ordinary
-  mappings or use `configure_logging(level=...)`.
-- Use `rich_console()` for Rich output and `progress()` as a context-managed
-  Rich progress display. Set `logging.markup: false` when log messages are not
-  trusted or should be rendered literally.
-- An active ClearML task receives Loguru messages automatically, even if a
-  logging flag is false. If the composed config has `clearml.enabled: true` or
-  `logging.clearml: true`, a forwarding sink is installed and resolves the
-  current task as messages are emitted. Create/activate ClearML tasks in the
-  experiment layer; this helper does not call `Task.init`.
-- Never print or include ClearML credentials in logs. This helper does not
-  read credential values, initialize ClearML sessions, or print credentials.
+- Конфигурацию задавайте в Hydra под `logging`; приложение настраивает логирование после композиции Hydra и до сообщений. Для обычного mapping или теста Hydra не требуется.
+- `configure_logging(config=cfg)` принимает полную конфигурацию; `configure_logging(level=...)` сохраняет возможность явно указать уровень. Явный аргумент `level` имеет приоритет над `logging.level`, затем используются `TAEI_LOG_LEVEL` и `INFO` по умолчанию. `logging.markup: false` отключает разметку Rich.
+- `rich_console()` создаёт Rich-консоль, `progress()` — контекстно-управляемый индикатор прогресса.
+- Процедура эксперимента возвращает итоговый JSON-сериализуемый словарь метрик. Runtime вызывает общий `taei.metrics.log_metrics` и сохраняет этот результат один раз; не вызывайте `log_metrics` повторно для того же итогового словаря в скрипте эксперимента.
+- Вызывайте `log_metrics` из процедуры только для отдельных промежуточных сообщений метрик, когда это действительно нужно; не дублируйте форматирование и отправку метрик.
+- Жизненный цикл запуска — инициализация ClearML-задачи, вызов процедуры, запись результата — принадлежит общему runtime (`taei.runtime`), а не logging helper. Экспериментальный скрипт задаёт процедуру, возвращает итоговые метрики и передаёт её runtime.
 
-Example Hydra configuration:
+Пример настроек в локальном или общем YAML:
 
 ```yaml
 logging:
@@ -32,25 +21,6 @@ clearml:
   enabled: false
 ```
 
-Example entrypoint and progress display:
+Текущая активная ClearML-задача получает сообщения Loguru даже при выключенном forwarding-флаге. Включённый `clearml.enabled` или `logging.clearml` включает forwarding sink; однако сам `taei.logging.configure_logging` не вызывает `Task.init` и не выполняет аутентификацию. Runtime управляет задачей, а `configure_logging` только конфигурирует логирование. ClearML требует настроенных учётных данных и доступного сервиса.
 
-```python
-from taei.logging import configure_logging, progress
-
-
-def run(cfg):  # cfg is the fully composed Hydra DictConfig
-    configure_logging(config=cfg)
-    with progress() as bar:
-        task_id = bar.add_task("Working", total=100)
-        # Advance with bar.update(task_id, advance=...) as work completes.
-```
-
-The package's existing `configure_logging(level="DEBUG")` call remains
-supported. An explicit `level` argument overrides the Hydra setting, which in
-turn overrides `TAEI_LOG_LEVEL` and the default `INFO` level. In the Hydra
-runner, set `clearml.enabled: true` (for example,
-`uv run python -m taei.run_experiment experiment=dummy clearml.enabled=true`) to
-initialize a ClearML task before logging; this requires the usual ClearML
-credentials and API connectivity. The runner passes the full composed config to
-the logger, and any already-active task is forwarded to even when this setting
-is false.
+Не печатайте и не добавляйте ClearML credentials в сообщения, конфигурационные дампы или результаты. Не помещайте секреты в общие YAML и документацию.

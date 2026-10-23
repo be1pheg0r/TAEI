@@ -1,5 +1,0 @@
-name: qwen3_8b_dense_smoke
-_target_: taei.experiments.dummy.DummyExperiment
-description: Minimal CPU-safe smoke experiment for validating Hydra and log collection.
-metrics:
-  smoke_checks: 1

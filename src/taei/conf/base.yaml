@@ -1,0 +1,24 @@
+defaults:
+  - engine: nano_vllm
+  - model: qwen3_8b_dense
+  - _self_
+
+seed: 42
+
+logging:
+  level: INFO
+  markup: true
+  clearml: false
+
+clearml:
+  enabled: false
+  project_name: TAEI
+
+hydra:
+  run:
+    dir: outputs/${experiment.name}/${now:%Y%m%d_%H%M%S_%f}
+  sweep:
+    dir: outputs/${experiment.name}/${now:%Y%m%d_%H%M%S_%f}
+    subdir: ${hydra.job.num}
+  job:
+    chdir: false
