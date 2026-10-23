@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taei"
+version = "0.1.0"
+description = "Python project scaffold for TAEI"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "clearml>=2.1.12",
+    "loguru>=0.7.3",
+    "python-dotenv>=1.2.4",
+    "rich>=15.0.0",
+]
+
+[project.optional-dependencies]
+inference = [
+    "nano-vllm @ git+https://github.com/GeeeekExplorer/nano-vllm.git@bb823b3e06983d71485a8e1f23715ebd87d98ef8",
+]
+
+[dependency-groups]
+dev = [
+    "isort>=9.0.2",
+    "pre-commit>=4.7.0",
+    "pytest>=9.1.1",
+    "ruff>=0.17.2",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP", "SIM"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+src_paths = ["src", "tests"]

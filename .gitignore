@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Environments and secrets
+.venv/
+.env
+.env.*
+!.env.example
+
+# Project-local SSH settings, host fingerprints and private keys
+/.ssh/*
+!/.ssh/config.example
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
