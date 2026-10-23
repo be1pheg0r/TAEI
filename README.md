@@ -63,6 +63,6 @@ uv run python experiments/dummy/run.py --cfg job
 uv run python experiments/dummy/run.py -m metrics.score=0.7,0.9
 ```
 
-Запуски сохраняют разрешённый `config.yaml` и `results.json` в `outputs/<experiment.name>/<уникальный-каталог>/`; каталоги multirun группируются там же и нумеруются Hydra. Hydra не меняет текущую рабочую директорию (`chdir=false`).
+Каждый запуск сохраняет разрешённый `config.yaml`, непрерывный `run.log` и архив `logs.zip` в `outputs/<experiment.name>/<каталог-запуска>/`. После успешного выполнения эксперимента там появляется `results.json`; ошибка выполнения или `KeyboardInterrupt` до записи результата не создаёт его, но ошибка поздней финализации ClearML может оставить уже записанный файл. Multirun-каталоги Hydra располагаются внутри каталога эксперимента; Hydra не меняет текущую рабочую директорию (`chdir=false`). Архив можно забрать по SFTP без доступа к ClearML; подробности и границы захвата — в [правилах логирования](docs/logging.md).
 
 См. [конфигурацию и запуск](docs/configuration.md) и [правила логирования](docs/logging.md).

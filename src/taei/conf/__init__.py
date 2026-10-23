@@ -1,1 +1,1 @@
-"""Packaged Hydra configuration for TAEI experiments."""
+"""Пакет встроенных Hydra-конфигураций, используемых экспериментами TAEI."""

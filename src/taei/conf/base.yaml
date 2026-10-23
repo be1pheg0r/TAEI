@@ -22,3 +22,7 @@ hydra:
     subdir: ${hydra.job.num}
   job:
     chdir: false
+  job_logging:
+    handlers:
+      file:
+        filename: ${hydra.runtime.output_dir}/hydra.log

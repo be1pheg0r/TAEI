@@ -1,4 +1,13 @@
+"""Проверяет результаты общей среды экспериментов и владение задачами ClearML.
+
+Тесты проверяют сохранение метрик и конфигурации, возвращаемые значения,
+инициализацию генератора случайных чисел, обработку созданных средой и уже
+существующих задач ClearML при успехе и ошибке, регистрацию ошибок сериализации
+конфигурации и сборку базовой Hydra-конфигурации пакета.
+"""
+
 import random
+import zipfile
 from random import Random
 from types import SimpleNamespace
 
@@ -102,22 +111,16 @@ def test_runtime_closes_owned_task_when_experiment_fails(monkeypatch, tmp_path):
     assert not (tmp_path / "results.json").exists()
 
 
-def test_runtime_closes_owned_task_when_initial_setup_fails(monkeypatch, tmp_path):
+def test_runtime_logs_config_serialization_failure(monkeypatch, tmp_path):
     from clearml import Task
 
     _hydra_output(monkeypatch, tmp_path)
-    calls = []
-
-    class OwnedTask:
-        def mark_failed(self, **kwargs):
-            calls.append("failed")
-
-        def close(self):
-            calls.append("close")
-
-    owned = OwnedTask()
     monkeypatch.setattr(Task, "current_task", staticmethod(lambda: None))
-    monkeypatch.setattr(Task, "init", lambda **kwargs: owned)
+    monkeypatch.setattr(
+        Task,
+        "init",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("init before config")),
+    )
     monkeypatch.setattr(
         OmegaConf,
         "to_yaml",
@@ -132,8 +135,16 @@ def test_runtime_closes_owned_task_when_initial_setup_fails(monkeypatch, tmp_pat
     else:
         raise AssertionError("setup exception was swallowed")
 
-    assert calls == ["failed", "close"]
     assert not (tmp_path / "results.json").exists()
+    assert not (tmp_path / "config.yaml").exists()
+    run_log = (tmp_path / "run.log").read_text(encoding="utf-8")
+    assert "ValueError" in run_log
+    assert "serialize" in run_log
+    assert "experiment status=failed" in run_log
+    with zipfile.ZipFile(tmp_path / "logs.zip") as archive:
+        archived_log = archive.read("run.log").decode("utf-8")
+        assert "ValueError" in archived_log
+        assert "serialize" in archived_log
 
 
 def test_runtime_does_not_close_an_existing_clearml_task(monkeypatch, tmp_path):

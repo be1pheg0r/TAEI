@@ -1,14 +1,24 @@
-"""Loguru logging helpers with Rich rendering and optional ClearML forwarding.
+"""Настройка Loguru, форматирования Rich, захвата вывода и передачи логов ClearML.
 
-Call :func:`configure_logging` from the application's Hydra entrypoint after
-Hydra composes its configuration. This module accepts DictConfig without
-requiring Hydra as a runtime dependency.
+``configure_logging`` вызывается точкой входа приложения после сборки Hydra-
+конфигурации, но модуль не требует Hydra как runtime-зависимость. Он читает
+параметры уровня и разметки, создает консоль и индикатор прогресса, подключает
+уже активную задачу ClearML без ее инициализации и не раскрывает учетные данные.
+Контекстный менеджер ``capture_output`` дублирует stdout/stderr в UTF-8 файл,
+включая доступные записи через файловые дескрипторы, и восстанавливает потоки
+после завершения, в том числе при исключении.
 """
 
 from __future__ import annotations
 
+import codecs
 import os
+import select
+import sys
+import threading
 from collections.abc import Mapping
+from contextlib import contextmanager, suppress
+from io import TextIOBase
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +26,188 @@ from dotenv import load_dotenv
 from loguru import logger
 from rich.console import Console
 from rich.progress import Progress
+
+
+class _TeeTextStream(TextIOBase):
+    """Text-stream fallback for environments whose standard streams lack FDs."""
+
+    def __init__(self, original: Any, log_file: Any, lock: threading.Lock) -> None:
+        self._original = original
+        self._log_file = log_file
+        self._lock = lock
+        self._active = True
+
+    def deactivate(self) -> None:
+        with self._lock:
+            self._active = False
+
+    @property
+    def encoding(self) -> str:
+        return getattr(self._original, "encoding", None) or "utf-8"
+
+    @property
+    def errors(self) -> str:
+        return getattr(self._original, "errors", None) or "strict"
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, text: str) -> int:
+        self._original.write(text)
+        with self._lock:
+            if self._active:
+                self._log_file.write(text)
+                self._log_file.flush()
+        return len(text)
+
+    def flush(self) -> None:
+        self._original.flush()
+        with self._lock:
+            if self._active:
+                self._log_file.flush()
+
+    def isatty(self) -> bool:
+        return bool(getattr(self._original, "isatty", lambda: False)())
+
+
+@contextmanager
+def capture_output(log_path: str | Path):
+    """Tee stdout and stderr (including native writes) to a UTF-8 text file.
+
+    File-descriptor capture is used when both standard streams expose usable
+    descriptors. In notebook/test environments without descriptors, Python
+    stream writes are captured through a text-stream fallback. Relay workers
+    drain data available at teardown and stop even if a child retains a pipe;
+    writes made by processes after capture exits are not captured.
+    """
+    path = Path(log_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    log_file = path.open("w", encoding="utf-8", buffering=1)
+    lock = threading.Lock()
+    original_streams = (sys.stdout, sys.stderr)
+    fds: tuple[int, int] | None = None
+    saved_fds: list[int] = []
+    pipe_fds: list[tuple[int, int]] = []
+    threads: list[threading.Thread] = []
+    fallback_streams: tuple[_TeeTextStream, _TeeTextStream] | None = None
+    try:
+        try:
+            fds = (sys.stdout.fileno(), sys.stderr.fileno())
+            saved_fds = [os.dup(fd) for fd in fds]
+            pipe_fds = [os.pipe(), os.pipe()]
+            for fd, (_, write_fd) in zip(fds, pipe_fds, strict=True):
+                os.dup2(write_fd, fd)
+                os.close(write_fd)
+        except (AttributeError, OSError, ValueError):
+            for fd, saved_fd in zip(fds or (), saved_fds, strict=False):
+                os.dup2(saved_fd, fd)
+                os.close(saved_fd)
+            for pipe_pair in pipe_fds:
+                for pipe_fd in pipe_pair:
+                    with suppress(OSError):
+                        os.close(pipe_fd)
+            saved_fds.clear()
+            pipe_fds.clear()
+            fallback_streams = (
+                _TeeTextStream(original_streams[0], log_file, lock),
+                _TeeTextStream(original_streams[1], log_file, lock),
+            )
+            sys.stdout, sys.stderr = fallback_streams
+            try:
+                yield
+            finally:
+                sys.stdout, sys.stderr = original_streams
+                for stream in fallback_streams:
+                    stream.deactivate()
+            return
+
+        stop_relay = threading.Event()
+        relay_errors: list[tuple[str, BaseException]] = []
+
+        def write_all(fd: int, data: bytes) -> None:
+            remaining = memoryview(data)
+            while remaining:
+                written = os.write(fd, remaining)
+                if written == 0:
+                    raise OSError("zero-length write to capture console")
+                remaining = remaining[written:]
+
+        def relay(read_fd: int, original_fd: int) -> None:
+            decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+            poller = select.poll()
+            poller.register(read_fd, select.POLLIN | select.POLLHUP | select.POLLERR)
+            try:
+                while True:
+                    ready = poller.poll(50)
+                    if not ready and not stop_relay.is_set():
+                        continue
+                    try:
+                        chunk = os.read(read_fd, 8192)
+                    except BlockingIOError:
+                        if stop_relay.is_set():
+                            break
+                        continue
+                    if not chunk:
+                        break
+                    try:
+                        write_all(original_fd, chunk)
+                    except OSError as exc:
+                        relay_errors.append(("console", exc))
+                    text = decoder.decode(chunk)
+                    if text:
+                        with lock:
+                            try:
+                                log_file.write(text)
+                                log_file.flush()
+                            except BaseException as exc:
+                                relay_errors.append(("disk", exc))
+                                break
+                tail = decoder.decode(b"", final=True)
+                if tail:
+                    with lock:
+                        try:
+                            log_file.write(tail)
+                            log_file.flush()
+                        except BaseException as exc:
+                            relay_errors.append(("disk", exc))
+            finally:
+                os.close(read_fd)
+
+        for read_fd, _ in pipe_fds:
+            os.set_blocking(read_fd, False)
+
+        for (read_fd, _), saved_fd in zip(pipe_fds, saved_fds, strict=True):
+            thread = threading.Thread(
+                target=relay,
+                args=(read_fd, saved_fd),
+                name="taei-output-relay",
+            )
+            thread.start()
+            threads.append(thread)
+        try:
+            yield
+        finally:
+            sys.stdout.flush()
+            sys.stderr.flush()
+            for fd, saved_fd in zip(fds, saved_fds, strict=True):
+                os.dup2(saved_fd, fd)
+            stop_relay.set()
+            for thread in threads:
+                thread.join()
+            for saved_fd in saved_fds:
+                os.close(saved_fd)
+            disk_errors = [exc for kind, exc in relay_errors if kind == "disk"]
+            console_errors = [exc for kind, exc in relay_errors if kind == "console"]
+            if sys.exc_info()[0] is None:
+                if disk_errors:
+                    raise disk_errors[0]
+                if console_errors:
+                    raise console_errors[0]
+    finally:
+        log_file.flush()
+        log_file.close()
 
 
 def _current_clearml_task() -> Any | None:
