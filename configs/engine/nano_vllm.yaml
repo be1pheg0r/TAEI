@@ -1,10 +1,12 @@
-# nano-vllm adapter settings; confirm hardware-dependent values on the target server.
+# Select the two 16 GiB RTX A4000s from nvidia-smi before starting Python:
+# CUDA_VISIBLE_DEVICES=1,2
+# The four 8 GiB Quadro RTX 4000s are intentionally excluded.
 backend: nano_vllm
 model: ${model.path}
 
-tensor_parallel_size: 1
+tensor_parallel_size: 2
 gpu_memory_utilization: 0.90
 max_model_len: 4096
-max_num_batched_tokens: 16384
-max_num_seqs: 256
+max_num_batched_tokens: 4096
+max_num_seqs: 4
 enforce_eager: false
