@@ -1,0 +1,14 @@
+logs.87.120.84.200.sslip.io {
+  encode zstd gzip
+  request_body {
+    max_size 26MB
+  }
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy no-referrer
+    X-Frame-Options DENY
+    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+  }
+  reverse_proxy taei-log-explorer:8091
+}
