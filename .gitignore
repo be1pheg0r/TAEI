@@ -5,6 +5,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+/.tmp/
 
 # Environments and secrets
 .venv/
@@ -20,3 +21,7 @@ __pycache__/
 .vscode/
 .idea/
 .DS_Store
+
+# Keep specifications and project instructions in private_specs/; ignore them by default.
+# Add explicit negation rules below for any specification that should be tracked.
+/private_specs/*
