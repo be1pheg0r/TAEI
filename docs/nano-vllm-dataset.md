@@ -35,7 +35,7 @@ Pair IDs group the four treatments for each workload and seed. Split group IDs k
 
 ## Exact GPU run
 
-Run on the intended local GPU host only after preflight succeeds, with the model local and pinned inference extra installed:
+Run on the intended local GPU host only after preflight succeeds, with the model local and pinned inference extra installed. The inference extra pins an upstream FlashAttention commit that selects C++20 for PyTorch 2.14+; the published `2.8.3.post2` source build still uses C++17 and fails against those ATen headers.
 
 ```bash
 uv sync --extra inference

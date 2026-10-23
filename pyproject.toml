@@ -21,6 +21,9 @@ dependencies = [
 
 [project.optional-dependencies]
 inference = [
+    # PyTorch 2.14+ needs C++20; this upstream commit fixes flash-attn's CUDA build flags.
+    "torch==2.14.1",
+    "flash-attn @ git+https://github.com/Dao-AILab/flash-attention.git@f87af617fab71c29c11e7f9bc74746ae7534a59d",
     "nano-vllm @ git+https://github.com/GeeeekExplorer/nano-vllm.git@bb823b3e06983d71485a8e1f23715ebd87d98ef8",
     "nvidia-ml-py>=12",
 ]
@@ -40,7 +43,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 taei = ["conf/**/*.yaml", "conf/*.yaml"]
 [tool.uv.extra-build-dependencies]
-flash-attn = [{ requirement = "torch", match-runtime = true }]
+flash-attn = ["torch==2.14.1"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"
