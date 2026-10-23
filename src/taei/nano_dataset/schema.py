@@ -590,6 +590,7 @@ CACHE_EVENT = _stamped(
         "event_type": {
             "enum": [
                 "lookup",
+                "capacity_check",
                 "hit",
                 "miss",
                 "allocate",
@@ -635,6 +636,7 @@ SCHED_EVENT = _stamped(
             ]
         },
         "run_id": ID,
+        "step_id": _nullable(ID),
         "request_ids": STRING_LIST,
         "request_count": NONNEG_INT,
         "reason": _nullable(STR),

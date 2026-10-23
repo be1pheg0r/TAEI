@@ -298,6 +298,7 @@ def test_fixed_batch_keeps_all_requests_and_advances_only_after_wave_finishes():
     assert len(step_rows) == 3
     assert len(joins) == 5
     assert len(token_rows) == 5
+    assert all(row["token_type"] == "sampled_output" for row in token_rows)
     assert all(row["produced_tokens"] == row["actual_batch_size"] for row in step_rows)
     assert all(row["host_observed_timestamp_ns"] is not None for row in token_rows)
     assert {row["request_id"] for row in joins} == {f"r{i}" for i in range(5)}
@@ -332,8 +333,18 @@ def test_prefix_cache_off_disables_hashing_and_lookup_on_real_upstream_scheduler
         if table == "cache_events" and row.get("operation") == "can_allocate"
     ]
     assert len(lookups) == 2
-    assert all(row["prefix_hit_blocks"] == 0 for row in lookups)
+    assert all(row["event_type"] == "capacity_check" for row in lookups)
+    assert all("prefix_hit_blocks" not in row for row in lookups)
     assert all(row["prefix_cache_mode"] == "off" for row in lookups)
+    schedules = [
+        row
+        for table, row in events
+        if table == "scheduler_events" and row.get("event_type") == "schedule"
+    ]
+    steps = [row for table, row in events if table == "steps"]
+    assert [event["step_id"] for event in schedules] == [
+        step["step_id"] for step in steps
+    ]
     backend._restore()
 
 

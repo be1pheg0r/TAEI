@@ -438,11 +438,18 @@ def _audit_run_directory(directory: str | Path) -> dict[str, Any]:
     schedule_events = [
         row
         for row in data.get("scheduler_events.jsonl", [])
-        if row.get("event") == "schedule"
+        if row.get("event_type", row.get("event")) == "schedule"
     ]
     if not schedule_events:
         errors.append("scheduler trace has no schedule decisions")
+    schedule_by_step = {}
     for event in schedule_events:
+        sid = event.get("step_id")
+        if sid not in step_ids:
+            errors.append(f"schedule event has unknown or missing step_id {sid!r}")
+        if sid in schedule_by_step:
+            errors.append(f"duplicate schedule decision for step {sid}")
+        schedule_by_step[sid] = event
         admitted = event.get("admitted_request_ids")
         if not isinstance(admitted, list) or any(
             rid not in req_by_id for rid in admitted
@@ -453,13 +460,26 @@ def _audit_run_directory(directory: str | Path) -> dict[str, Any]:
             len(admitted) > 8 or not isinstance(event.get("wave_id"), (str, int))
         ):
             errors.append("fixed_batch schedule must use a wave_id and admit at most 8")
+        if sid in step_map and set(event.get("request_ids", [])) != set(
+            step_map[sid].get("request_ids", [])
+        ):
+            errors.append(
+                f"schedule decision for step {sid} disagrees with step requests"
+            )
+    for sid in step_ids:
+        if sid not in schedule_by_step:
+            errors.append(f"step {sid} has no matching schedule decision")
     for event in data.get("cache_events.jsonl", []):
         mode = event.get("prefix_cache_mode")
         if mode is not None and mode != prefix_mode:
             errors.append("cache event prefix_cache_mode disagrees with run config")
-        if prefix_mode == "off" and event.get("operation") in (
-            "hash_blocks",
-            "can_allocate",
+        if prefix_mode == "off" and (
+            event.get("operation") == "hash_blocks"
+            or (
+                event.get("operation") == "can_allocate"
+                and event.get("event_type") != "capacity_check"
+            )
+            or event.get("event_type") == "lookup"
         ):
             errors.append(
                 "prefix-cache-off trace includes prefix lookup/hash operation"
@@ -535,7 +555,7 @@ def _check_work_conservation(data, run, requests, errors):
     decisions = {
         event.get("step_id"): event
         for event in data.get("scheduler_events.jsonl", [])
-        if event.get("event") == "schedule"
+        if event.get("event_type", event.get("event")) == "schedule"
     }
     generated = Counter()
     current_wave = None

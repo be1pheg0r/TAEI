@@ -562,14 +562,12 @@ class NanoVLLMBackend:
                     self._event(
                         "cache_events",
                         event_id=str(uuid.uuid4()),
-                        event_type="lookup",
+                        event_type="capacity_check",
                         operation="can_allocate",
                         step_id=self._step_key() if self._step_id else None,
                         request_id=self._request_id_for_seq(seq),
                         prefix_cache_mode="off",
-                        eligible_prefix_blocks=max(seq.num_blocks - 1, 0),
-                        prefix_hit_blocks=0,
-                        prefix_miss_blocks=max(seq.num_blocks - 1, 0),
+                        eligible_blocks=needed,
                         result=result,
                     )
                     return result
@@ -665,6 +663,7 @@ class NanoVLLMBackend:
                 self._event(
                     "scheduler_events",
                     event_type="schedule",
+                    step_id=self._step_key(),
                     request_ids=[self._request_id_for_seq(seq) for seq in selected],
                     request_count=len(selected),
                     reason="prefill" if prefill else "decode",
@@ -760,7 +759,7 @@ class NanoVLLMBackend:
                                 step_id=self._step_key(),
                                 token_index=output_index,
                                 token_id=int(token_id),
-                                token_type="generated",
+                                token_type="sampled_output",
                                 token_origin="sampled_output",
                                 gpu_generated_timestamp_ns=None,
                                 host_observed_timestamp_ns=observed,

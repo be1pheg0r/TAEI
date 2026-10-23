@@ -246,6 +246,72 @@ def test_success_and_nonempty_hooks_do_not_bypass_pending_calibration(tmp_path):
     assert any("calibration" in error.lower() for error in report["errors"])
 
 
+def test_producer_shaped_trace_joins_emit_contract_and_reaches_only_calibration_gate(
+    tmp_path,
+):
+    """Producer event names/fields survive persistence and QC joins."""
+    _valid_attempt(tmp_path)
+    token_path = tmp_path / "token_events.jsonl"
+    tokens = [json.loads(line) for line in token_path.read_text().splitlines()]
+    for row in tokens:
+        row["token_type"] = "sampled_output"
+        row["token_origin"] = "sampled_output"
+    token_path.write_text("".join(json.dumps(row) + "\n" for row in tokens))
+    sched_path = tmp_path / "scheduler_events.jsonl"
+    schedule = [json.loads(line) for line in sched_path.read_text().splitlines()]
+    for row in schedule:
+        if row.get("event_type") == "schedule":
+            row.pop("event", None)
+            row["step_id"] = str(row["step_id"])
+    sched_path.write_text("".join(json.dumps(row) + "\n" for row in schedule))
+    _refresh_hashes(tmp_path)
+
+    report = audit_run_directory(tmp_path)
+    assert report["accepted"] is False
+    assert report["errors"] == [
+        "overhead calibration is pending or unverified; primary acceptance is gated",
+    ]
+
+
+def test_schedule_decision_requires_known_step_and_exact_request_join(tmp_path):
+    _valid_attempt(tmp_path)
+    path = tmp_path / "scheduler_events.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    event = next(row for row in rows if row.get("event_type") == "schedule")
+    event["step_id"] = "missing-step"
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    _refresh_hashes(tmp_path)
+    report = audit_run_directory(tmp_path)
+    assert any("unknown or missing step_id" in error for error in report["errors"])
+    assert any("no matching schedule decision" in error for error in report["errors"])
+
+
+def test_prefix_off_capacity_check_is_distinct_from_real_lookup(tmp_path):
+    _valid_attempt(tmp_path)
+    run_path = tmp_path / "runs.json"
+    run = json.loads(run_path.read_text())
+    run["prefix_cache_mode"] = "off"
+    _write_json(run_path, run)
+    path = tmp_path / "cache_events.jsonl"
+    rows = [
+        {
+            "operation": "can_allocate",
+            "event_type": "capacity_check",
+            "prefix_cache_mode": "off",
+        }
+    ]
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    _refresh_hashes(tmp_path)
+    report = audit_run_directory(tmp_path)
+    assert not any("prefix lookup/hash" in error for error in report["errors"])
+
+    rows[0]["event_type"] = "lookup"
+    path.write_text(json.dumps(rows[0]) + "\n")
+    _refresh_hashes(tmp_path)
+    report = audit_run_directory(tmp_path)
+    assert any("prefix lookup/hash" in error for error in report["errors"])
+
+
 def test_coherent_synthetic_fixed_wave_attempt_is_accepted(tmp_path):
     """Synthetic structure fixture only; it is not GPU execution evidence."""
     _valid_attempt(tmp_path)
