@@ -2,13 +2,6 @@ version = 1
 revision = 3
 requires-python = "==3.12.*"
 
-[manifest]
-
-[[manifest.dependency-metadata]]
-name = "flash-attn"
-version = "2.8.4"
-requires-dist = ["torch", "einops"]
-
 [[package]]
 name = "annotated-doc"
 version = "0.0.5"
@@ -246,11 +239,15 @@ wheels = [
 
 [[package]]
 name = "flash-attn"
-version = "2.8.4"
-source = { git = "https://github.com/Dao-AILab/flash-attention.git?rev=f87af617fab71c29c11e7f9bc74746ae7534a59d#f87af617fab71c29c11e7f9bc74746ae7534a59d" }
+version = "2.8.3.post1+cu.13.0.torch.2.14"
+source = { registry = "https://wheels.astral.sh/simple/cu130/" }
 dependencies = [
     { name = "einops" },
     { name = "torch" },
+]
+wheels = [
+    { url = "https://wheels.astral.sh/artifacts/891344d08118380d1499c5111a6b691188fe0498fc894370e34090eb2901a319/flash_attn-2.8.3.post1+cu.13.0.torch.2.14-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:891344d08118380d1499c5111a6b691188fe0498fc894370e34090eb2901a319", size = 242574674, upload-time = "2026-10-03T18:52:33Z" },
+    { url = "https://wheels.astral.sh/artifacts/5d582e72d432921a3e9d0a4a576df84240af8b9b5f4707010b1f0cd343e3c276/flash_attn-2.8.3.post1+cu.13.0.torch.2.14-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:5d582e72d432921a3e9d0a4a576df84240af8b9b5f4707010b1f0cd343e3c276", size = 242751342, upload-time = "2026-10-03T18:52:33Z" },
 ]
 
 [[package]]
@@ -1178,7 +1175,7 @@ dev = [
 requires-dist = [
     { name = "clearml", specifier = ">=2.1.12" },
     { name = "filelock", specifier = ">=3.12" },
-    { name = "flash-attn", marker = "extra == 'inference'", git = "https://github.com/Dao-AILab/flash-attention.git?rev=f87af617fab71c29c11e7f9bc74746ae7534a59d" },
+    { name = "flash-attn", marker = "extra == 'inference'", specifier = "==2.8.3.post1+cu.13.0.torch.2.14", index = "https://wheels.astral.sh/simple/cu130/" },
     { name = "huggingface-hub", specifier = ">=0.34.0" },
     { name = "hydra-core", specifier = ">=1.3.2" },
     { name = "jsonschema", specifier = ">=4.25.0" },

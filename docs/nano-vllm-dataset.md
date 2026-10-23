@@ -35,7 +35,7 @@ Pair IDs group the four treatments for each workload and seed. Split group IDs k
 
 ## Exact GPU run
 
-Run on the intended local GPU host only after preflight succeeds, with the model local and pinned inference extra installed. The inference extra selects a prebuilt FlashAttention 2.9.1 wheel from Astral's CUDA 13.0 index for PyTorch 2.14.1; this avoids compiling FlashAttention and cloning its unused ROCm submodule on CUDA hosts.
+Run on the intended local GPU host only after preflight succeeds, with the model local and pinned inference extra installed. The inference extra pins Astral's prebuilt `flash-attn==2.8.3.post1+cu.13.0.torch.2.14` wheel from its CUDA 13.0 index alongside `torch==2.14.1`. The wheel declares `torch==2.14.*`; the older `2.8.3` wheels only target Torch through 2.11, and `==2.8.3` excludes the compatible `.post1` release. Installation uses a wheel, not a Git checkout or source build, so it neither clones ROCm/aiter nor needs a local C++20/CUDA compiler. The wheel supports Linux x86_64/aarch64; GPU execution still requires a CUDA-13-compatible NVIDIA driver and a supported GPU. CPU-only plan/download use plain `uv sync` without the inference extra.
 
 ```bash
 uv sync --extra inference

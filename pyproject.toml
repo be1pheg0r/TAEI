@@ -22,7 +22,8 @@ dependencies = [
 [project.optional-dependencies]
 inference = [
     "torch==2.14.1",
-    "flash-attn==2.9.1",
+    # Astral's post1 wheel targets Torch 2.14; 2.8.3 wheels only target <=2.11.
+    "flash-attn==2.8.3.post1+cu.13.0.torch.2.14",
     "nano-vllm @ git+https://github.com/GeeeekExplorer/nano-vllm.git@bb823b3e06983d71485a8e1f23715ebd87d98ef8",
     "nvidia-ml-py>=12",
 ]

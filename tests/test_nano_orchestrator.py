@@ -8,6 +8,7 @@ preflight, точное сопоставление идентичности/на
 """
 
 import json
+import sys
 from pathlib import Path
 
 from taei.nano_dataset import orchestrator
@@ -126,7 +127,11 @@ def test_preflight_blocks_path_without_tokenizer_weights_or_cuda_runtime(
     assert "torch_cuda_unavailable" in report["blocking_reasons"]
 
 
-def test_missing_inference_dependency_writes_rejected_immutable_attempt(tmp_path):
+def test_missing_inference_dependency_writes_rejected_immutable_attempt(
+    tmp_path, monkeypatch
+):
+    # Exercise the missing-dependency path even with the inference extra installed.
+    monkeypatch.setitem(sys.modules, "nanovllm", None)
     spec = build_run_matrix()[0]
     result = run_attempt(
         spec,
@@ -144,7 +149,7 @@ def test_missing_inference_dependency_writes_rejected_immutable_attempt(tmp_path
     manifest = json.loads((attempt / "manifest.json").read_text())
     assert run["status"] == "failed"
     assert run["primary_status"] == "rejected"
-    assert run["error"]["type"] in {"RuntimeError", "ModuleNotFoundError"}
+    assert run["error"]["type"] == "RuntimeError"
     assert manifest["coverage"]["primary_analysis_accepted"] is False
     validation = json.loads((attempt / "schema_validation.json").read_text())
     assert validation["valid"] is True, validation["errors"]
