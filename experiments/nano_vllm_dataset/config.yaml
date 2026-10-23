@@ -2,6 +2,7 @@
 defaults:
   - base
   - _self_
+  - profile@_global_: source_tp4
 
 hydra:
   searchpath:

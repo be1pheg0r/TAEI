@@ -4,12 +4,12 @@ This experiment follows Outline document `b0d87b1f-2006-4d92-8fbf-2efc72375b3c`,
 
 ## CPU-only plan, download and preflight
 
-Install with `uv sync`. Plan does not import nano-vLLM or PyTorch. Preflight is read-only; it never downloads. The Hugging Face downloader is a base dependency, so CPU-only preparation does not require the `inference` extra.
+Plan does not import nano-vLLM or PyTorch. Preflight is read-only; it never downloads. On the GPU host, keep the inference extra installed with `uv sync --locked --extra inference`.
 
 ```bash
 uv run python experiments/nano_vllm_dataset/run.py --cfg job
 uv run python experiments/nano_vllm_dataset/run.py mode=plan
-uv run python experiments/nano_vllm_dataset/run.py mode=download
+uv run --locked --extra inference python experiments/nano_vllm_dataset/run.py mode=download
 ```
 
 The default model is pinned to `Qwen/Qwen3-0.6B` revision `c1899de289a04d12100db370d81485cdf75e47ca`. Its default destination is `~/.cache/taei/models/Qwen3-0.6B`; set `TAEI_QWEN3_0_6B_PATH` or `dataset.model_path=...` to select another path. `download.enabled`, `download.repo_id`, and `download.revision` are explicit controls. The downloader resolves the requested revision to an immutable Hub commit and uses that commit for the snapshot.
@@ -21,10 +21,10 @@ The default model is pinned to `Qwen/Qwen3-0.6B` revision `c1899de289a04d12100db
 Plan does not import nano-vLLM or PyTorch. Preflight does not load the model or construct a CUDA context; it imports PyTorch only for its lightweight `torch.cuda.is_available()` check.
 
 ```bash
-uv run python experiments/nano_vllm_dataset/run.py --cfg job
-uv run python experiments/nano_vllm_dataset/run.py mode=plan
+uv run --locked --extra inference python experiments/nano_vllm_dataset/run.py --cfg job
+uv run --locked --extra inference python experiments/nano_vllm_dataset/run.py mode=plan
 TAEI_QWEN3_0_6B_PATH=/local/models/Qwen3-0.6B \
-  uv run python experiments/nano_vllm_dataset/run.py mode=preflight
+  uv run --locked --extra inference python experiments/nano_vllm_dataset/run.py mode=preflight
 ```
 
 Preflight reads local model metadata and host hardware through read-only collectors. It exits nonzero and preserves `preflight.json` if the local model path or visible GPU capability is absent. The effective model path defaults to `~/.cache/taei/models/Qwen3-0.6B`; override with `TAEI_QWEN3_0_6B_PATH` or `dataset.model_path=...`. Actual architecture, dimensions, hashes, and weight dtype come from the selected local snapshot. Inherited Qwen3-8B labels are nulled, not presented as facts.
@@ -35,31 +35,57 @@ Pair IDs group the four treatments for each workload and seed. Split group IDs k
 
 ## Exact GPU run
 
-Run on the intended local GPU host only after preflight succeeds, with the model local and pinned inference extra installed. The inference extra pins Astral's prebuilt `flash-attn==2.8.3.post1+cu.13.0.torch.2.14` wheel from its CUDA 13.0 index alongside `torch==2.14.1`. The wheel declares `torch==2.14.*`; the older `2.8.3` wheels only target Torch through 2.11, and `==2.8.3` excludes the compatible `.post1` release. Installation uses a wheel, not a Git checkout or source build, so it neither clones ROCm/aiter nor needs a local C++20/CUDA compiler. The wheel supports Linux x86_64/aarch64; GPU execution still requires a CUDA-13-compatible NVIDIA driver and a supported GPU. CPU-only plan/download use plain `uv sync` without the inference extra.
+Run on the intended local GPU host only after preflight succeeds, with the model local and pinned inference extra installed. The inference extra pins Astral's prebuilt `flash-attn==2.8.3.post1+cu.13.0.torch.2.14` wheel from its CUDA 13.0 index alongside `torch==2.14.1`. The wheel declares `torch==2.14.*`; the older `2.8.3` wheels only target Torch through 2.11, and `==2.8.3` excludes the compatible `.post1` release. Installation uses a wheel, not a Git checkout or source build, so it neither clones ROCm/aiter nor needs a local C++20/CUDA compiler. The wheel supports Linux x86_64/aarch64; GPU execution still requires a CUDA-13-compatible NVIDIA driver and a supported GPU.
 
 ```bash
-uv sync --extra inference
+uv sync --locked --extra inference
 export TAEI_QWEN3_0_6B_PATH=/local/models/Qwen3-0.6B
-uv run python experiments/nano_vllm_dataset/run.py \
+uv run --locked --extra inference python experiments/nano_vllm_dataset/run.py \
   mode=run dataset.model_path="$TAEI_QWEN3_0_6B_PATH" dataset.run_limit=24
 ```
 
 `dataset.run_limit=1` is a setup check, not the complete pilot. Do not use Hydra multirun to represent the matrix: orchestration owns execution order and identity. Every measured row makes exactly one `engine.generate` call with all 32 requests. Fixed-batch admission waves happen within that call. Each attempt writes a unique UUID directory; failures are retained and retries never overwrite them.
 
-The effective pilot config is asserted: TP=4 (requires four visible GPUs), max_num_seqs=8, max_num_batched_tokens=16,384, max_model_len=4,096, CUDA graphs enabled (`enforce_eager=false`), gpu_memory_utilization=0.9. `max_num_seqs=8` is an upstream **per-schedule selected batch** cap in dynamic mode; the upstream running set can exceed eight across steps. Fixed mode admits waves <=8 without replacing completed members until the wave drains. Neither is a global active-request cap.
+The default `profile=source_tp4` preserves the source TP=4 pilot. The supported A4000 derivative is selected with `profile@_global_=rtx_a4000_tp2`; it has a distinct experiment name and run/overhead roots and explicitly records the source document/revision plus `hardware_deviation: true`. This is a hardware-specific derivative, not the source TP4 pilot, and does not claim primary acceptance or calibration. Its only engine change is TP=2; `max_num_seqs=8`, max_num_batched_tokens=16,384, max_model_len=4,096, CUDA graphs (`enforce_eager=false`), gpu_memory_utilization=0.9, workload, scheduler and cache semantics are preserved. `max_num_seqs=8` is an upstream **per-schedule selected batch** cap in dynamic mode; the upstream running set can exceed eight across steps. Fixed mode admits waves <=8 without replacing completed members until the wave drains. Neither is a global active-request cap.
+
+For the known host layout (physical GPU 1 and 2 are RTX A4000), select devices explicitly. `CUDA_DEVICE_ORDER=PCI_BUS_ID` makes enumeration follow PCI bus order; `CUDA_VISIBLE_DEVICES=1,2` exposes only those devices, renumbered inside the process as 0 and 1. These host-specific values are shell settings, not library defaults. Do not stop any process already using a GPU; investigate ownership before running.
+
+```bash
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
+export CUDA_VISIBLE_DEVICES=1,2
+export TAEI_QWEN3_0_6B_PATH=/local/models/Qwen3-0.6B
+uv sync --locked --extra inference
+uv run --locked --extra inference python experiments/nano_vllm_dataset/run.py \
+  profile@_global_=rtx_a4000_tp2 mode=download
+uv run --locked --extra inference python experiments/nano_vllm_dataset/run.py \
+  profile@_global_=rtx_a4000_tp2 mode=preflight
+```
+
+After download and successful preflight, run one smoke attempt, then the full matrix:
+
+```bash
+uv run --locked --extra inference python experiments/nano_vllm_dataset/run.py \
+  profile@_global_=rtx_a4000_tp2 mode=run dataset.run_limit=1
+# Optional separate trace-overhead diagnostic (not calibration/acceptance):
+uv run --locked --extra inference python experiments/nano_vllm_dataset/run.py \
+  profile@_global_=rtx_a4000_tp2 mode=overhead
+# Full 24-run collection:
+uv run --locked --extra inference python experiments/nano_vllm_dataset/run.py \
+  profile@_global_=rtx_a4000_tp2 mode=run dataset.run_limit=24
+```
 
 ## Paired trace-overhead diagnostic
 
 Before primary timing review, run a separate detailed-vs-minimal diagnostic on the same local GPU/model/config:
 
 ```bash
-uv run python experiments/nano_vllm_dataset/run.py mode=overhead
+uv run --locked --extra inference python experiments/nano_vllm_dataset/run.py mode=overhead
 ```
 
 This writes a standalone report and supporting files to a unique directory under `dataset.overhead_output_root`; the exact report path is saved in the command's `results.json`. It is not one of the 24 pilot runs. Default diagnostic scope is S, seed 42, prefix cache on, upstream dynamic scheduler. The report records actual token input/output identity, profile/config/source identity, paired wall-time deltas/ratios, and files/hashes. It does not invent a pass threshold. When re-running the pilot, pass the exact report path:
 
 ```bash
-uv run python experiments/nano_vllm_dataset/run.py \
+uv run --locked --extra inference python experiments/nano_vllm_dataset/run.py \
   mode=run dataset.calibration_report=/absolute/path/to/overhead.json dataset.run_limit=24
 ```
 

@@ -280,6 +280,7 @@ def run_attempt(
     engine_config: dict[str, Any],
     output_root: str | Path,
     *,
+    experiment_profile: dict[str, Any] | None = None,
     telemetry_interval_s: float = 1.0,
     calibration_report: dict[str, Any] | None = None,
     calibration_report_path: str | None = None,
@@ -457,6 +458,7 @@ def run_attempt(
             ],
         },
         "effective_config": dict(engine_config),
+        "experiment_profile": experiment_profile,
         "timing_policy": {
             **build_plan()["timing_policy"],
             "primary_analysis_gate": {

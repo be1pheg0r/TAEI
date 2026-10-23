@@ -34,6 +34,10 @@ PILOT_ENGINE = {
     "enforce_eager": False,
     "gpu_memory_utilization": 0.9,
 }
+ENGINE_PROFILES = {
+    "source_tp4": {**PILOT_ENGINE},
+    "rtx_a4000_tp2": {**PILOT_ENGINE, "tensor_parallel_size": 2},
+}
 
 
 def _save_json(path: Path, value: dict) -> None:
@@ -62,10 +66,34 @@ def _load_calibration_report(path: str | None) -> dict | None:
 
 
 def _check_engine_config(cfg: DictConfig) -> dict:
-    actual = {key: cfg.engine.get(key) for key in PILOT_ENGINE}
-    if actual != PILOT_ENGINE:
+    profile = dict(cfg.hardware_profile)
+    profile_id = profile.get("profile_id")
+    expected_engine = ENGINE_PROFILES.get(profile_id)
+    if expected_engine is None:
+        raise ValueError(f"unsupported hardware profile: {profile_id!r}")
+    actual = {key: cfg.engine.get(key) for key in expected_engine}
+    if actual != expected_engine:
         raise ValueError(
-            f"pilot engine invariants differ: expected={PILOT_ENGINE}, actual={actual}"
+            f"{profile_id} engine invariants differ: "
+            f"expected={expected_engine}, actual={actual}"
+        )
+    expected_identity = {
+        "source_tp4": ("nano_vllm_dataset", "outputs/nano_vllm_dataset/runs", False),
+        "rtx_a4000_tp2": (
+            "nano_vllm_dataset_rtx_a4000_tp2",
+            "outputs/nano_vllm_dataset_rtx_a4000_tp2/runs",
+            True,
+        ),
+    }[profile_id]
+    identity = (
+        cfg.experiment.name,
+        cfg.dataset.output_root,
+        bool(profile.get("hardware_deviation")),
+    )
+    if identity != expected_identity:
+        raise ValueError(
+            f"{profile_id} identity invariant differs: "
+            f"expected={expected_identity}, actual={identity}"
         )
     model_path = str(cfg.dataset.model_path)
     if cfg.engine.get("model") != model_path or cfg.model.get("path") != model_path:
@@ -144,6 +172,7 @@ def run(cfg: DictConfig) -> dict:
         plan["configuration"] = {
             "engine": _check_engine_config(cfg),
             "model_path": model_path,
+            "experiment_profile": dict(cfg.hardware_profile),
         }
         _save_json(output_dir / "plan.json", plan)
         return {
@@ -215,6 +244,7 @@ def run(cfg: DictConfig) -> dict:
                 model_path,
                 engine_config,
                 cfg.dataset.output_root,
+                experiment_profile=dict(cfg.hardware_profile),
                 telemetry_interval_s=float(cfg.dataset.telemetry_interval_s),
                 calibration_report=calibration,
                 calibration_report_path=str(cfg.dataset.calibration_report)
