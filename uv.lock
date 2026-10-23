@@ -2,6 +2,13 @@ version = 1
 revision = 3
 requires-python = "==3.12.*"
 
+[manifest]
+
+[[manifest.dependency-metadata]]
+name = "flash-attn"
+version = "2.8.4"
+requires-dist = ["torch", "einops"]
+
 [[package]]
 name = "annotated-doc"
 version = "0.0.5"
@@ -239,13 +246,12 @@ wheels = [
 
 [[package]]
 name = "flash-attn"
-version = "2.8.3.post2"
-source = { registry = "https://pypi.org/simple" }
+version = "2.8.4"
+source = { git = "https://github.com/Dao-AILab/flash-attention.git?rev=f87af617fab71c29c11e7f9bc74746ae7534a59d#f87af617fab71c29c11e7f9bc74746ae7534a59d" }
 dependencies = [
     { name = "einops" },
     { name = "torch" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6c/b1/b77625e3d11260d2bd6a4fc249a4be9a3da97ff848e2222e810c4f0e0211/flash_attn-2.8.3.post2.tar.gz", hash = "sha256:d0f9f0b08a986cdeadbffcf5ec8b3a8f514366c68ad1853d3ab061bc83cc340b", size = 8453127, upload-time = "2026-10-14T01:37:12.132Z" }
 
 [[package]]
 name = "fsspec"
@@ -1153,8 +1159,10 @@ dependencies = [
 
 [package.optional-dependencies]
 inference = [
+    { name = "flash-attn" },
     { name = "nano-vllm" },
     { name = "nvidia-ml-py" },
+    { name = "torch" },
 ]
 
 [package.dev-dependencies]
@@ -1170,6 +1178,7 @@ dev = [
 requires-dist = [
     { name = "clearml", specifier = ">=2.1.12" },
     { name = "filelock", specifier = ">=3.12" },
+    { name = "flash-attn", marker = "extra == 'inference'", git = "https://github.com/Dao-AILab/flash-attention.git?rev=f87af617fab71c29c11e7f9bc74746ae7534a59d" },
     { name = "huggingface-hub", specifier = ">=0.34.0" },
     { name = "hydra-core", specifier = ">=1.3.2" },
     { name = "jsonschema", specifier = ">=4.25.0" },
@@ -1178,6 +1187,7 @@ requires-dist = [
     { name = "nvidia-ml-py", marker = "extra == 'inference'", specifier = ">=12" },
     { name = "python-dotenv", specifier = ">=1.2.4" },
     { name = "rich", specifier = ">=15.0.0" },
+    { name = "torch", marker = "extra == 'inference'", specifier = "==2.14.1" },
 ]
 provides-extras = ["inference"]
 

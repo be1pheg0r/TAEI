@@ -42,6 +42,11 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 taei = ["conf/**/*.yaml", "conf/*.yaml"]
+[[tool.uv.dependency-metadata]]
+name = "flash-attn"
+version = "2.8.4"
+requires-dist = ["torch", "einops"]
+
 [tool.uv.extra-build-dependencies]
 flash-attn = ["torch==2.14.1"]
 
