@@ -17,7 +17,7 @@ def test_hydra_composes_exact_pilot_and_no_stale_8b_metadata():
         text=True,
     )
     text = result.stdout
-    assert "tensor_parallel_size: 1" in text
+    assert "tensor_parallel_size: 4" in text
     assert "max_num_seqs: 8" in text
     assert "max_num_batched_tokens: 16384" in text
     assert "max_model_len: 4096" in text

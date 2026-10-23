@@ -209,10 +209,6 @@ class NanoVLLMBackend:
             raise ValueError(f"invalid prefix_cache_mode: {prefix_cache_mode}")
         if scheduler_mode not in self._VALID_SCHEDULER:
             raise ValueError(f"invalid scheduler_mode: {scheduler_mode}")
-        if engine_config.get("tensor_parallel_size", 1) != 1:
-            raise ValueError(
-                "nano-vLLM dataset adapter requires tensor_parallel_size=1"
-            )
         self.model_path = model_path
         self.engine_config = dict(engine_config)
         self.prefix_cache_mode = prefix_cache_mode

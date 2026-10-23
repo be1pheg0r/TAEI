@@ -27,7 +27,7 @@ from taei.nano_dataset.orchestrator import build_plan, preflight, run_attempt
 from taei.runtime import run_experiment
 
 PILOT_ENGINE = {
-    "tensor_parallel_size": 1,
+    "tensor_parallel_size": 4,
     "max_num_seqs": 8,
     "max_num_batched_tokens": 16384,
     "max_model_len": 4096,

@@ -64,7 +64,7 @@ def test_backend_configuration_and_generation_interface_is_stable():
             "max_num_seqs": 8,
             "max_num_batched_tokens": 16384,
             "max_model_len": 4096,
-            "tensor_parallel_size": 1,
+            "tensor_parallel_size": 4,
             "enforce_eager": False,
             "gpu_memory_utilization": 0.9,
             "kvcache_block_size": 256,

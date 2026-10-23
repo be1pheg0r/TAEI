@@ -46,7 +46,7 @@ uv run python experiments/nano_vllm_dataset/run.py \
 
 `dataset.run_limit=1` is a setup check, not the complete pilot. Do not use Hydra multirun to represent the matrix: orchestration owns execution order and identity. Every measured row makes exactly one `engine.generate` call with all 32 requests. Fixed-batch admission waves happen within that call. Each attempt writes a unique UUID directory; failures are retained and retries never overwrite them.
 
-The effective pilot config is asserted: TP=1, max_num_seqs=8, max_num_batched_tokens=16,384, max_model_len=4,096, CUDA graphs enabled (`enforce_eager=false`), gpu_memory_utilization=0.9. `max_num_seqs=8` is an upstream **per-schedule selected batch** cap in dynamic mode; the upstream running set can exceed eight across steps. Fixed mode admits waves <=8 without replacing completed members until the wave drains. Neither is a global active-request cap.
+The effective pilot config is asserted: TP=4 (requires four visible GPUs), max_num_seqs=8, max_num_batched_tokens=16,384, max_model_len=4,096, CUDA graphs enabled (`enforce_eager=false`), gpu_memory_utilization=0.9. `max_num_seqs=8` is an upstream **per-schedule selected batch** cap in dynamic mode; the upstream running set can exceed eight across steps. Fixed mode admits waves <=8 without replacing completed members until the wave drains. Neither is a global active-request cap.
 
 ## Paired trace-overhead diagnostic
 
