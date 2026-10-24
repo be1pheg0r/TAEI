@@ -623,21 +623,11 @@ def run_attempt(
         trace_complete = (
             status == "success" and len(requests) == 32 and not missing_hooks
         )
-        # The separate paired trace-overhead diagnostic has not been calibrated.
-        # Do not label any pilot row primary-accepted before that gate is met.
         complete = False
-        if trace_complete and calibration_gate["status"] in {
-            "pending_calibration",
-            "review_required",
-        }:
-            run_row["primary_status"] = "pending"
-            run_row["primary_gate_reason"] = calibration_gate["reason"]
-        else:
-            run_row["primary_status"] = "rejected"
+        run_row["primary_status"] = "not_evaluated" if trace_complete else "rejected"
+        if not trace_complete:
             run_row["primary_gate_reason"] = (
-                calibration_gate["reason"]
-                if trace_complete
-                else "missing_primary_trace_or_incomplete_requests"
+                "missing_primary_trace_or_incomplete_requests"
             )
         run_row.update(ids)
         _write_json(run_dir / "runs.json", run_row)
@@ -732,8 +722,6 @@ def run_attempt(
         "effective_config": run_row["effective_config"],
         "backend_constructed": backend is not None,
         "real_generate_completed": generate_completed,
-        "primary_status": "rejected"
-        if run_row["primary_status"] != "accepted"
-        else qc["primary_status"],
+        "primary_status": run_row["primary_status"],
         "qc": qc,
     }

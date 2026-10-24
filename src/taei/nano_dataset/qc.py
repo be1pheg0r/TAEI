@@ -501,17 +501,7 @@ def _audit_run_directory(directory: str | Path) -> dict[str, Any]:
     missing_hooks = coverage.get("missing_hooks")
     if not isinstance(missing_hooks, list) or missing_hooks:
         errors.append("manifest missing_hooks is absent, invalid, or nonempty")
-    # Gate primary analysis until paired instrumentation calibration.
     timing = run.get("timing_policy")
-    if (
-        not isinstance(timing, dict)
-        or timing.get("primary_analysis_gate") != "calibrated"
-    ):
-        errors.append(
-            "overhead calibration is pending or unverified; primary acceptance is gated"
-        )
-    if run.get("primary_status") != "accepted":
-        errors.append("runs.json does not declare primary_status accepted")
     if run.get("status") == "success":
         metrics = run.get("metrics")
         if not isinstance(metrics, dict):
@@ -536,7 +526,15 @@ def _audit_run_directory(directory: str | Path) -> dict[str, Any]:
     }
     return {
         "accepted": not errors,
-        "primary_status": "accepted" if not errors else "rejected",
+        "primary_status": "rejected" if errors else "not_evaluated",
+        "diagnostics": {
+            "overhead_calibration": (
+                timing.get("primary_analysis_gate", {}).get("status", "pending")
+                if isinstance(timing, dict)
+                and isinstance(timing.get("primary_analysis_gate"), dict)
+                else "pending"
+            )
+        },
         "errors": errors,
         "counts": counts,
         "missing_primary_files": missing,

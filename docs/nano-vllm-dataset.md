@@ -97,9 +97,9 @@ The measured interval starts after `backend.synchronize()` and ends after matchi
 
 Telemetry includes explicit before/after snapshots outside the timed window plus periodic samples. The `inference` extra installs `nvidia-ml-py` for read-only NVML access. Device support and permissions remain conditional; missing values carry field status/reason, never zero. Periodic samples are not per-step estimates. No counter reset, clock/power change, or remote execution occurs.
 
-**Primary analysis is gated pending a paired minimal-vs-detailed trace overhead diagnostic.** Successful inference is not primary-accepted until that diagnostic is reviewed, required traces/counts/joins pass QC, and calibration is explicitly recorded. Partial or empty traces are incomplete/rejected. No forecast is generated.
+Collection does not require an overhead calibration or an `accepted` declaration. Structurally sound traces report QC `accepted: true` and primary status `not_evaluated`; this is not scientific acceptance or review. Calibration remains optional diagnostic metadata. Missing/incomplete traces and integrity/join/schema errors still fail QC. No forecast is generated.
 
-The current collector preserves matching calibration evidence as `review_required` and does not implement a review-approval/promote command. Therefore raw inference collection can succeed while primary-analysis acceptance remains pending; the raw data must not be relabeled as accepted automatically.
+Runs preserve calibration evidence as optional diagnostics, without blocking normal collection or claiming primary acceptance.
 
 ## Dataset/QC
 

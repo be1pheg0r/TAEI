@@ -414,7 +414,9 @@ RUN = _object(
                 "failed_or_no_output",
             ]
         },
-        "primary_status": {"enum": ["accepted", "rejected", "pending"]},
+        "primary_status": {
+            "enum": ["accepted", "rejected", "pending", "not_evaluated"]
+        },
         "error": _nullable(
             _object({"type": STR, "message": {"type": "string"}, "stage": STR})
         ),

@@ -6,6 +6,6 @@ The child inherits the composed `logging` and `clearml` settings and calls the s
 
 ## Eager-mode hardware profile
 
-The `rtx_a4000_tp2` derivative enables `engine.enforce_eager: true`, disabling CUDA-graph capture/replay. This is a conservative compatibility/performance tradeoff: it can increase launch overhead and reduce throughput, so results from it are not directly equivalent to the source TP4 profile. It is a mitigation, not proof of an NCCL root cause. Calibrate trace overhead on the exact effective eager configuration; the engine-config hash makes a report from a different setting out of scope.
+The `rtx_a4000_tp2` derivative enables `engine.enforce_eager: true`, disabling CUDA-graph capture/replay. This is a conservative compatibility/performance tradeoff: it can increase launch overhead and reduce throughput, so results from it are not directly equivalent to the source TP4 profile. It is a mitigation, not proof of an NCCL root cause. Overhead calibration is optional and does not gate collection. If performed, it must match the effective eager configuration to be applicable.
 
 Run `uv run --locked --extra inference python experiments/nano_vllm_dataset/run.py profile@_global_=rtx_a4000_tp2 mode=plan --cfg job` to inspect the composed profile without inference.

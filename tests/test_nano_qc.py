@@ -238,15 +238,16 @@ def test_missing_primary_hooks_cannot_be_accepted(tmp_path):
     assert report["accepted"] is False
 
 
-def test_success_and_nonempty_hooks_do_not_bypass_pending_calibration(tmp_path):
+def test_successful_run_is_not_blocked_by_pending_calibration(tmp_path):
     _valid_attempt(tmp_path)
     report = audit_run_directory(tmp_path)
-    assert report["accepted"] is False
-    assert report["primary_status"] == "rejected"
-    assert any("calibration" in error.lower() for error in report["errors"])
+    assert report["accepted"] is True
+    assert report["primary_status"] == "not_evaluated"
+    assert report["errors"] == []
+    assert report["diagnostics"]["overhead_calibration"] == "pending"
 
 
-def test_producer_shaped_trace_joins_emit_contract_and_reaches_only_calibration_gate(
+def test_producer_shaped_trace_joins_emit_contract_without_acceptance_gates(
     tmp_path,
 ):
     """Producer event names/fields survive persistence and QC joins."""
@@ -267,10 +268,9 @@ def test_producer_shaped_trace_joins_emit_contract_and_reaches_only_calibration_
     _refresh_hashes(tmp_path)
 
     report = audit_run_directory(tmp_path)
-    assert report["accepted"] is False
-    assert report["errors"] == [
-        "overhead calibration is pending or unverified; primary acceptance is gated",
-    ]
+    assert report["accepted"] is True
+    assert report["primary_status"] == "not_evaluated"
+    assert report["errors"] == []
 
 
 def test_schedule_decision_requires_known_step_and_exact_request_join(tmp_path):
