@@ -38,7 +38,7 @@ uv run python experiments/dummy/run.py --cfg job
 uv run python experiments/dummy/run.py -m metrics.score=0.7,0.9
 ```
 
-Переопределения применяются к ключам композиции; например, `metrics.score` — корневой параметр метрик, а не `experiment.metrics.score`. Hydra не меняет рабочую директорию (`chdir=false`). Одиночные запуски сохраняются в `outputs/<experiment.name>/<уникальный-каталог>/`; разрешённая конфигурация записывается как `config.yaml`, результат — как `results.json`. Каталоги multirun находятся в том же каталоге имени эксперимента и нумеруются Hydra.
+Переопределения применяются к ключам композиции; например, `metrics.score` — корневой параметр метрик, а не `experiment.metrics.score`. Hydra не меняет рабочую директорию (`chdir=false`). Одиночные запуски сохраняются в `outputs/<experiment.name>/<уникальный-каталог>/`; разрешённая конфигурация записывается как `config.yaml`, результат — как `results.json`. Для nano-vLLM каждый Hydra-каталог является корнем одной полной инвокации: попытки находятся в `<инвокация>/runs/<run_id>/<attempt_id>`, overhead-диагностика — в `<инвокация>/overhead/<diagnostic_id>`, а `dataset-summary.json`, `config.yaml` и журналы остаются рядом в корне. Эффективные `dataset.output_root` и `dataset.overhead_output_root` разрешаются в этот корень инвокации; менять их на общие пути нельзя. Отдельные инвокации поэтому не перезаписывают друг другу попытки и диагностику. Каталоги multirun находятся в том же каталоге имени эксперимента и нумеруются Hydra.
 
 ## Локальные журналы
 

@@ -6,10 +6,10 @@ COPY frontend/ ./
 RUN npm run build
 
 FROM python:3.12-slim AS runtime
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 TMPDIR=/var/spool/log-explorer
 WORKDIR /app/backend
 COPY backend/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt && useradd --uid 10001 --create-home explorer
+RUN apt-get update && apt-get install -y --no-install-recommends libarchive-tools && rm -rf /var/lib/apt/lists/* && pip install --no-cache-dir -r requirements.txt && useradd --uid 10001 --create-home explorer && mkdir -p /var/spool/log-explorer && chown explorer:explorer /var/spool/log-explorer
 COPY backend/ ./
 COPY --from=frontend /build/dist /app/frontend/dist
 USER explorer

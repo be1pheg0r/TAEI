@@ -6,4 +6,3 @@ hardware_profile:
   source_requirements_document_id: b0d87b1f-2006-4d92-8fbf-2efc72375b3c
   source_requirements_revision: 16
   experiment_name: nano_vllm_dataset
-  output_root: outputs/nano_vllm_dataset/runs

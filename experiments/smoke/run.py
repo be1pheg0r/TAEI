@@ -10,6 +10,7 @@
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
+from taei.launch import maybe_launch_detached
 from taei.runtime import run_experiment
 
 
@@ -29,4 +30,6 @@ def run(cfg: DictConfig) -> dict:
 
 
 if __name__ == "__main__":
+    if maybe_launch_detached(__file__):
+        raise SystemExit(0)
     main()

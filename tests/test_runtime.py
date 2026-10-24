@@ -48,7 +48,14 @@ def test_runtime_returns_logs_and_writes_metrics(capsys, tmp_path, monkeypatch):
     result = run_experiment(_config(), lambda _: {"answer": 42})
 
     assert result == {"answer": 42}
-    assert "metric answer=42" in capsys.readouterr().err
+    output = capsys.readouterr().err
+    assert "metrics: answer=42" in output
+    assert "metric answer=42" not in output
+    assert "Starting experiment: unit" in output
+    assert "Finished experiment: unit" in output
+    assert str(tmp_path / "results.json") in "".join(output.splitlines())
+    assert "status=started" not in output
+    assert "status=finished" not in output
     assert (tmp_path / "config.yaml").exists()
     assert (tmp_path / "results.json").read_text() == '{"answer": 42}'
 

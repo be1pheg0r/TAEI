@@ -14,14 +14,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-import uuid
 from pathlib import Path
 
 import hydra
 from hydra.core.hydra_config import HydraConfig
-from loguru import logger
 from omegaconf import DictConfig
 
+from taei import logging as project_logging
+from taei.launch import maybe_launch_detached
 from taei.nano_dataset.isolation import run_isolated
 from taei.nano_dataset.model_download import ensure_model
 from taei.nano_dataset.orchestrator import build_plan, preflight
@@ -83,22 +83,29 @@ def _check_engine_config(cfg: DictConfig) -> dict:
             f"expected={expected_engine}, actual={actual}"
         )
     expected_identity = {
-        "source_tp4": ("nano_vllm_dataset", "outputs/nano_vllm_dataset/runs", False),
-        "rtx_a4000_tp2": (
-            "nano_vllm_dataset_rtx_a4000_tp2",
-            "outputs/nano_vllm_dataset_rtx_a4000_tp2/runs",
-            True,
-        ),
+        "source_tp4": ("nano_vllm_dataset", False),
+        "rtx_a4000_tp2": ("nano_vllm_dataset_rtx_a4000_tp2", True),
     }[profile_id]
-    identity = (
-        cfg.experiment.name,
-        cfg.dataset.output_root,
-        bool(profile.get("hardware_deviation")),
-    )
+    identity = (cfg.experiment.name, bool(profile.get("hardware_deviation")))
     if identity != expected_identity:
         raise ValueError(
             f"{profile_id} identity invariant differs: "
             f"expected={expected_identity}, actual={identity}"
+        )
+    invocation_dir = Path(HydraConfig.get().runtime.output_dir).resolve()
+    expected_output_root = invocation_dir / "runs"
+    configured_output_root = Path(str(cfg.dataset.output_root)).resolve()
+    if configured_output_root != expected_output_root:
+        raise ValueError(
+            f"{profile_id} output root must be inside this Hydra invocation: "
+            f"expected={expected_output_root}, actual={configured_output_root}"
+        )
+    expected_overhead_root = invocation_dir / "overhead"
+    configured_overhead_root = Path(str(cfg.dataset.overhead_output_root)).resolve()
+    if configured_overhead_root != expected_overhead_root:
+        raise ValueError(
+            f"{profile_id} overhead root must be inside this Hydra invocation: "
+            f"expected={expected_overhead_root}, actual={configured_overhead_root}"
         )
     model_path = str(cfg.dataset.model_path)
     if cfg.engine.get("model") != model_path or cfg.model.get("path") != model_path:
@@ -207,14 +214,26 @@ def run(cfg: DictConfig) -> dict:
         report = _prepare_for_inference(cfg, output_dir, "overhead")
         from taei.nano_dataset.overhead import measure_overhead
 
-        diagnostic = measure_overhead(
-            model_path,
-            engine_config,
-            Path(cfg.dataset.overhead_output_root) / str(uuid.uuid4()),
-            workload_name=str(cfg.dataset.overhead_workload),
-            seed=int(cfg.dataset.overhead_seed),
-            pair_count=int(cfg.dataset.overhead_pair_count),
-        )
+        pair_count = int(cfg.dataset.overhead_pair_count)
+        with project_logging.experiment_progress(
+            pair_count * 2, "Calibration profiles"
+        ) as bar:
+
+            def report_progress(stage: str, outcome: str | None) -> None:
+                if outcome is None:
+                    bar.stage(stage)
+                else:
+                    bar.advance(outcome)
+
+            diagnostic = measure_overhead(
+                model_path,
+                engine_config,
+                Path(cfg.dataset.overhead_output_root),
+                workload_name=str(cfg.dataset.overhead_workload),
+                seed=int(cfg.dataset.overhead_seed),
+                pair_count=pair_count,
+                progress_callback=report_progress,
+            )
         return {
             "mode": mode,
             "diagnostic_id": diagnostic["diagnostic_id"],
@@ -236,37 +255,37 @@ def run(cfg: DictConfig) -> dict:
         raise ValueError("dataset.run_limit must be between 0 and 24")
     selected = plan["matrix"][: limit or 24]
     summaries = []
-    for item in selected:
-        logger.info(
-            "dataset run={} order={} condition={}",
-            item["run_id"],
-            item["run_order"],
-            item["condition_id"],
-        )
-        attempt_summary = run_isolated(
-            {
-                "run_spec": item,
-                "model_path": model_path,
-                "engine_config": engine_config,
-                "output_root": cfg.dataset.output_root,
-                "experiment_profile": dict(cfg.hardware_profile),
-                "telemetry_interval_s": float(cfg.dataset.telemetry_interval_s),
-                "calibration_report": calibration,
-                "calibration_report_path": str(cfg.dataset.calibration_report)
-                if cfg.dataset.calibration_report
-                else None,
-                "logging_config": {
-                    "logging": dict(cfg.get("logging", {})),
-                    "clearml": dict(cfg.get("clearml", {})),
-                },
-            },
-            timeout_s=float(cfg.dataset.attempt_timeout_s),
-        )
-        summaries.append(attempt_summary)
-        if attempt_summary.get("status") != "success":
-            raise RuntimeError(
-                f"attempt failed; artifact={attempt_summary.get('path', 'unknown')}"
+    with project_logging.experiment_progress(len(selected), "Dataset attempts") as bar:
+        for index, item in enumerate(selected, start=1):
+            bar.stage(
+                f"Attempt {index}/{len(selected)}: waiting · {item['run_id'][:24]}"
             )
+            attempt_summary = run_isolated(
+                {
+                    "run_spec": item,
+                    "model_path": model_path,
+                    "engine_config": engine_config,
+                    "output_root": cfg.dataset.output_root,
+                    "experiment_profile": dict(cfg.hardware_profile),
+                    "telemetry_interval_s": float(cfg.dataset.telemetry_interval_s),
+                    "calibration_report": calibration,
+                    "calibration_report_path": str(cfg.dataset.calibration_report)
+                    if cfg.dataset.calibration_report
+                    else None,
+                    "logging_config": {
+                        "logging": dict(cfg.get("logging", {})),
+                        "clearml": dict(cfg.get("clearml", {})),
+                    },
+                },
+                timeout_s=float(cfg.dataset.attempt_timeout_s),
+            )
+            summaries.append(attempt_summary)
+            outcome = str(attempt_summary.get("status", "unknown"))
+            bar.advance(outcome)
+            if outcome != "success":
+                raise RuntimeError(
+                    f"attempt failed; artifact={attempt_summary.get('path', 'unknown')}"
+                )
     identities = {
         key: sorted({item[key] for item in summaries if item.get(key) is not None})
         for key in ("hardware_id", "environment_id", "model_id")
@@ -298,4 +317,6 @@ def run(cfg: DictConfig) -> dict:
 
 
 if __name__ == "__main__":
+    if maybe_launch_detached(__file__):
+        raise SystemExit(0)
     main()

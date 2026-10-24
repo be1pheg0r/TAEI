@@ -5,8 +5,10 @@ import csv
 import io
 import json
 import math
+import os
 import re
 import stat
+import tempfile
 import threading
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -19,16 +21,15 @@ from starlette.formparsers import MultiPartException
 
 BASE = Path(__file__).resolve().parent
 FRONTEND = BASE.parent / "frontend" / "dist"
-MAX_UPLOAD = 25 * 1024 * 1024
-MAX_REQUEST = 26 * 1024 * 1024
-MAX_EXPANDED = 100 * 1024 * 1024
-MAX_FILES = 300
-MAX_ROWS = 20_000
-MAX_FIELDS = 250_000
+# Large archives are spooled to disk. Parsing retains bounded previews; archive
+# size/member count are not correctness limits. Complexity/ratio guards remain.
+MAX_UPLOAD = MAX_REQUEST = MAX_EXPANDED = MAX_FILES = MAX_MEMBER = None
+MAX_ROWS = 500
+MAX_FIELDS = 100_000
+MAX_PREVIEW_TABLE_ROWS = 500
 MAX_DEPTH = 64
 MAX_LINE = 2 * 1024 * 1024
 MAX_LITERAL = 1024 * 1024
-MAX_MEMBER = 16 * 1024 * 1024
 MAX_RATIO = 200
 PARSE_GATE = threading.BoundedSemaphore(2)
 TABLES = (
@@ -207,7 +208,7 @@ class AnalyzeRequestGuard:
             declared = int(headers.get(b"content-length", b"0"))
         except ValueError:
             declared = 0
-        if declared > MAX_REQUEST:
+        if MAX_REQUEST is not None and declared > MAX_REQUEST:
             await self._respond(send, 413, b"Request body exceeds 26 MiB limit.")
             return
         # Atomic admission; excess requests fail fast without joining a queue.
@@ -222,7 +223,7 @@ class AnalyzeRequestGuard:
             message = await receive()
             if message["type"] == "http.request":
                 count += len(message.get("body", b""))
-                if count > MAX_REQUEST:
+                if MAX_REQUEST is not None and count > MAX_REQUEST:
                     oversized = True
                     # Starlette closes spooled multipart files on this exception.
                     raise _BodyTooLarge("Request body exceeds 26 MiB limit.")
@@ -264,6 +265,17 @@ class AnalyzeRequestGuard:
 
 class _BodyTooLarge(MultiPartException):
     pass
+
+
+class PreviewRecords(list):
+    """Bound API record previews while counting every successfully parsed row."""
+
+    total = 0
+
+    def append(self, item):
+        self.total += 1
+        if len(self) < MAX_ROWS:
+            super().append(item)
 
 
 app.add_middleware(AnalyzeRequestGuard)
@@ -352,8 +364,6 @@ def _parse_literal(text):
 
 
 def _append(records, rec):
-    if len(records) >= MAX_ROWS:
-        raise ValueError("Archive exceeds record row limit.")
     data = rec.get("data")
     if isinstance(data, dict) and rec.get("kind") == "metric":
         metric = data.get("metric", "")
@@ -491,11 +501,13 @@ def _record_row(name, row, records, tables, line, kind):
     stem = Path(name).stem
     table = next((t for t in TABLES if stem == t or stem.endswith("_" + t)), None)
     if table:
-        tables[table].append(
-            {"source": name, **row}
-            if isinstance(row, dict)
-            else {"source": name, "value": row}
-        )
+        tables["_counts"][table] += 1
+        if len(tables[table]) < MAX_PREVIEW_TABLE_ROWS:
+            tables[table].append(
+                {"source": name, **row}
+                if isinstance(row, dict)
+                else {"source": name, "value": row}
+            )
     _append(
         records,
         {
@@ -512,7 +524,7 @@ def _record_row(name, row, records, tables, line, kind):
 
 
 def _parse_member(name, raw, records, tables, warnings, json_runs):
-    if len(raw) > MAX_EXPANDED:
+    if MAX_EXPANDED is not None and len(raw) > MAX_EXPANDED:
         raise ValueError("Member exceeds parser limit.")
     text = raw.decode("utf-8-sig", errors="replace")
     kind = _kind(name)
@@ -532,6 +544,9 @@ def _parse_member(name, raw, records, tables, warnings, json_runs):
                     _record_row(name, row, records, tables, n, "json")
                 if Path(name).stem == "runs":
                     json_runs.extend(obj)
+            elif Path(name).stem == "runs" and isinstance(obj, dict):
+                json_runs.append(obj)
+                _record_row(name, obj, records, tables, 1, "json")
             else:
                 _record_row(name, obj, records, tables, 1, "json")
     elif kind == "jsonl":
@@ -550,70 +565,168 @@ def _parse_member(name, raw, records, tables, warnings, json_runs):
             _record_row(name, clean, records, tables, n, "csv")
 
 
+def _parse_jsonl_blocks(name, blocks, records, tables):
+    pending = bytearray()
+    row = 0
+    for block in blocks:
+        pending.extend(block)
+        while (newline := pending.find(b"\n")) >= 0:
+            raw_line = bytes(pending[:newline])
+            del pending[: newline + 1]
+            row += 1
+            if len(raw_line) > MAX_LINE:
+                raise ValueError("JSONL line exceeds parser limit.")
+            line = raw_line.decode(
+                "utf-8-sig" if row == 1 else "utf-8", errors="replace"
+            )
+            if line.strip():
+                _record_row(name, _json_loads(line), records, tables, row, "json")
+        if len(pending) > MAX_LINE:
+            raise ValueError("JSONL line exceeds parser limit.")
+    if pending:
+        row += 1
+        line = bytes(pending).decode(
+            "utf-8-sig" if row == 1 else "utf-8", errors="replace"
+        )
+        if line.strip():
+            _record_row(name, _json_loads(line), records, tables, row, "json")
+
+
+def _is_directory(info, is_rar):
+    return info.is_dir() or (is_rar and info.filename.endswith("/"))
+
+
 def _analyze(blob, filename):
-    if len(blob) > MAX_UPLOAD:
-        raise ValueError("Upload exceeds 25 MiB.")
-    try:
-        zf = zipfile.ZipFile(io.BytesIO(blob))
-    except (zipfile.BadZipFile, OSError) as exc:
-        raise ValueError("Invalid ZIP archive.") from exc
-    with zf:
+    with tempfile.NamedTemporaryFile(
+        prefix="log-explorer-", suffix=".archive"
+    ) as stream:
+        stream.write(blob)
+        stream.flush()
+        return _analyze_path(Path(stream.name), filename)
+
+
+def _analyze_path(path, filename):
+    with open(path, "rb") as source:
+        magic = source.read(8)
+    is_zip = magic.startswith(b"PK\x03\x04") or magic.startswith(b"PK\x05\x06")
+    is_rar = magic.startswith(b"Rar!\x1a\x07")
+    if not (is_zip or is_rar):
+        raise ValueError("Unsupported archive format (expected ZIP or RAR).")
+    if is_rar:
+        try:
+            import rarfile
+
+            archive = rarfile.RarFile(path, errors="strict")
+        except Exception as exc:
+            raise ValueError(f"Invalid or unsupported RAR archive: {exc}") from exc
+    else:
+        try:
+            archive = zipfile.ZipFile(path)
+        except (zipfile.BadZipFile, OSError) as exc:
+            raise ValueError("Invalid ZIP archive.") from exc
+    with archive as zf:
         infos = zf.infolist()
-        if len(infos) > MAX_FILES:
-            raise ValueError("Archive contains too many members.")
         seen, total = set(), 0
         for info in infos:
-            path = PurePosixPath(info.filename)
-            mode = info.external_attr >> 16
-            normalized = str(path).casefold()
+            member_path = PurePosixPath(info.filename)
+            mode = (
+                (getattr(info, "external_attr", 0) or 0) >> 16
+                if is_zip
+                else (getattr(info, "mode", 0) or 0)
+            )
+            normalized = str(member_path).casefold()
             if (
-                path.is_absolute()
-                or ".." in path.parts
+                member_path.is_absolute()
+                or ".." in member_path.parts
                 or "\\" in info.filename
                 or normalized in seen
                 or stat.S_ISLNK(mode)
+                or (is_rar and (info.is_symlink() or getattr(info, "file_redir", None)))
             ):
                 raise ValueError("Unsafe or duplicate ZIP path.")
             seen.add(normalized)
-            if info.flag_bits & 1:
+            if is_zip and info.flag_bits & 1:
                 raise ValueError("Encrypted ZIP members are unsupported.")
-            if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            if is_rar and info.needs_password():
+                raise ValueError("Encrypted RAR members are unsupported.")
+            if is_zip and info.compress_type not in (
+                zipfile.ZIP_STORED,
+                zipfile.ZIP_DEFLATED,
+            ):
                 raise ValueError("Unsupported ZIP compression method.")
             total += info.file_size
-            if info.file_size > MAX_MEMBER:
-                raise ValueError("Archive member exceeds 16 MiB parser limit.")
-            if total > MAX_EXPANDED:
-                raise ValueError("Expanded archive exceeds 100 MiB.")
             if info.file_size and (
                 not info.compress_size
                 or info.file_size / info.compress_size > MAX_RATIO
             ):
-                raise ValueError("ZIP compression ratio exceeds limit.")
-        files, records, warnings, json_runs = [], [], [], []
+                raise ValueError("Archive compression ratio exceeds limit.")
+        files, records, warnings, json_runs = [], PreviewRecords(), [], []
         tables = {table: [] for table in TABLES}
-        for info in infos:
-            if info.is_dir():
-                continue
-            before = len(records)
-            raw = zf.read(info)
-            try:
-                _parse_member(info.filename, raw, records, tables, warnings, json_runs)
-            except (
-                ValueError,
-                json.JSONDecodeError,
-                csv.Error,
-                UnicodeError,
-                zipfile.BadZipFile,
-            ) as exc:
-                raise ValueError(f"Could not parse {info.filename}: {exc}") from exc
+        tables["_counts"] = {table: 0 for table in TABLES}
+
+        def consume(name, size, blocks):
+            before = records.total
+            if _kind(name) == "jsonl":
+                _parse_jsonl_blocks(name, blocks, records, tables)
+            else:
+                raw = b"".join(blocks)
+                if len(raw) != size:
+                    raise ValueError(f"Short archive member: {name}")
+                _parse_member(name, raw, records, tables, warnings, json_runs)
             files.append(
                 {
-                    "name": info.filename,
-                    "size": info.file_size,
-                    "kind": _kind(info.filename),
-                    "records": len(records) - before,
+                    "name": name,
+                    "size": size,
+                    "kind": _kind(name),
+                    "records": records.total - before,
                 }
             )
+
+        if is_rar:
+            import libarchive
+
+            with libarchive.file_reader(os.fspath(path)) as entries:
+                info_iter = (i for i in infos if not _is_directory(i, is_rar))
+                for entry in entries:
+                    if entry.filetype == stat.S_IFDIR or entry.pathname.endswith("/"):
+                        continue
+                    try:
+                        info = next(info_iter)
+                    except StopIteration as exc:
+                        raise ValueError(
+                            "RAR member index does not match stream."
+                        ) from exc
+                    if entry.pathname != info.filename or entry.size != info.file_size:
+                        raise ValueError(f"RAR stream/member mismatch: {info.filename}")
+                    consume(info.filename, info.file_size, entry.get_blocks())
+                if next(info_iter, None) is not None:
+                    raise ValueError("RAR stream omitted archive members.")
+        else:
+            for info in infos:
+                if info.is_dir():
+                    continue
+                before = records.total
+                raw = zf.read(info)
+                try:
+                    _parse_member(
+                        info.filename, raw, records, tables, warnings, json_runs
+                    )
+                except (
+                    ValueError,
+                    json.JSONDecodeError,
+                    csv.Error,
+                    UnicodeError,
+                    zipfile.BadZipFile,
+                ) as exc:
+                    raise ValueError(f"Could not parse {info.filename}: {exc}") from exc
+                files.append(
+                    {
+                        "name": info.filename,
+                        "size": info.file_size,
+                        "kind": _kind(info.filename),
+                        "records": records.total - before,
+                    }
+                )
     metrics, runs = {}, list(json_runs)
     experiment = status = None
     for rec in records:
@@ -629,11 +742,22 @@ def _analyze(blob, filename):
             if key == "runs" and isinstance(value, list):
                 runs.extend(value)
                 for run_index, run in enumerate(value, 1):
-                    if isinstance(run, dict):
+                    if (
+                        isinstance(run, dict)
+                        and len(tables["runs"]) < MAX_PREVIEW_TABLE_ROWS
+                    ):
                         tables["runs"].append(
                             {"source": rec["source"], "row": run_index, **run}
                         )
             metrics[key] = value
+    attempts = runs
+    unique_runs = {}
+    for run in attempts:
+        if isinstance(run, dict):
+            identity = run.get("run_id") or run.get("attempt_id")
+            if identity is not None:
+                unique_runs.setdefault(str(identity), run)
+    runs = list(unique_runs.values()) if unique_runs else attempts
     fields = []
     for ri, rec in enumerate(records):
         if "data" in rec:
@@ -668,8 +792,20 @@ def _analyze(blob, filename):
         isinstance(run, dict) and run.get("primary_status") == "accepted"
         for run in runs
     )
+    table_counts = tables.pop("_counts")
+    tables["_meta"] = {
+        "counts": table_counts,
+        "preview_limit": MAX_PREVIEW_TABLE_ROWS,
+        "preview_rows": {key: len(tables[key]) for key in TABLES},
+        "is_preview": any(table_counts[key] > len(tables[key]) for key in TABLES),
+    }
     return {
-        "archive": {"name": filename, "files": files, "warnings": warnings},
+        "archive": {
+            "name": filename,
+            "format": "rar" if is_rar else "zip",
+            "files": files,
+            "warnings": warnings,
+        },
         "metrics": metrics,
         "runs": runs,
         "records": records,
@@ -679,8 +815,12 @@ def _analyze(blob, filename):
             "experiment": experiment,
             "status": status,
             "run_count": len(runs),
+            "attempt_count": len(attempts),
             "accepted_count": accepted,
-            "record_count": len(records),
+            "record_count": records.total,
+            "record_preview_count": len(records),
+            "record_preview_limit": MAX_ROWS,
+            "records_are_preview": records.total > len(records),
             "warnings": warnings,
         },
     }
@@ -696,15 +836,17 @@ async def analyze(file: UploadFile = File(...)):  # noqa: B008 - FastAPI request
     if not PARSE_GATE.acquire(blocking=False):
         raise HTTPException(503, "Service busy; retry later.")
     try:
-        buf = bytearray()
-        while chunk := await file.read(1024 * 1024):
-            buf.extend(chunk)
-            if len(buf) > MAX_UPLOAD:
-                raise ValueError("Upload exceeds 25 MiB.")
+        with tempfile.NamedTemporaryFile(
+            prefix="upload-", suffix=".archive", delete=False
+        ) as target:
+            spool_path = Path(target.name)
+            await file.seek(0)
+            while chunk := await file.read(1024 * 1024):
+                target.write(chunk)
         import anyio
 
         return await anyio.to_thread.run_sync(
-            _analyze, bytes(buf), Path(file.filename or "upload.zip").name
+            _analyze_path, spool_path, Path(file.filename or "upload.zip").name
         )
     except HTTPException:
         raise
@@ -714,6 +856,8 @@ async def analyze(file: UploadFile = File(...)):  # noqa: B008 - FastAPI request
             str(exc) if isinstance(exc, ValueError) else "Could not process archive.",
         ) from exc
     finally:
+        if "spool_path" in locals():
+            spool_path.unlink(missing_ok=True)
         PARSE_GATE.release()
         await file.close()
 

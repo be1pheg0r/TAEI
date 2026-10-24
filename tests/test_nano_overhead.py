@@ -92,8 +92,16 @@ def test_paired_profiles_use_same_requests_capture_actual_outputs_and_hash_artif
     tmp_path, monkeypatch
 ):
     setup_test_backend(monkeypatch)
+    progress_events = []
     report = overhead.measure_overhead(
-        "/fixture-model", {"max_num_seqs": 8}, tmp_path, workload_name="S", seed=42
+        "/fixture-model",
+        {"max_num_seqs": 8},
+        tmp_path,
+        workload_name="S",
+        seed=42,
+        progress_callback=lambda stage, outcome: progress_events.append(
+            (stage, outcome)
+        ),
     )
 
     assert report["status"] == "complete"
@@ -116,6 +124,12 @@ def test_paired_profiles_use_same_requests_capture_actual_outputs_and_hash_artif
     assert pair["overhead"]["units"] == "seconds and dimensionless ratio"
     assert report["identity"]["model_details"]["model_revision"] == "model-rev"
     assert report["identity"]["engine_source_hashes"] == {"fixture.py": "a" * 64}
+    assert progress_events == [
+        ("Calibration pair 1/1: minimal", None),
+        ("Calibration pair 1/1: minimal", "success"),
+        ("Calibration pair 1/1: detailed", None),
+        ("Calibration pair 1/1: detailed", "success"),
+    ]
     assert (
         report["version_policy"]["requires_exact_revision_and_source_hash_match"]
         is True

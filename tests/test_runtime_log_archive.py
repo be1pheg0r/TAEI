@@ -51,7 +51,7 @@ def test_success_creates_local_log_and_finalized_zip(monkeypatch, tmp_path, caps
     assert "callback stdout" in console.out
     run_log = (output_dir / "run.log").read_text(encoding="utf-8")
     assert "callback stdout" in run_log
-    assert "status=finished" in run_log
+    assert "Finished experiment: unit" in run_log
     with zipfile.ZipFile(output_dir / "logs.zip") as archive:
         assert set(archive.namelist()) == {"run.log", "hydra.log"}
         assert archive.read("run.log") == (output_dir / "run.log").read_bytes()

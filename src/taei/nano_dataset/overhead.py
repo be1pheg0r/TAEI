@@ -15,6 +15,7 @@ import json
 import math
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -244,6 +245,7 @@ def measure_overhead(
     workload_name: str = "S",
     seed: int = 42,
     pair_count: int = 1,
+    progress_callback: Callable[[str, str | None], None] | None = None,
 ) -> dict[str, Any]:
     """Run paired real generation profiles and persist an isolated diagnostic.
 
@@ -278,6 +280,9 @@ def measure_overhead(
         profile_results = {}
         event_rows: dict[str, dict[str, list[dict[str, Any]]]] = {}
         for profile in PROFILES:
+            profile_stage = f"Calibration pair {pair_index}/{pair_count}: {profile}"
+            if progress_callback is not None:
+                progress_callback(profile_stage, None)
             events: dict[str, list[dict[str, Any]]] = {}
 
             def emit(
@@ -296,6 +301,8 @@ def measure_overhead(
             profile_results[profile] = result
             event_rows[profile] = events
             profile_records.append(result)
+            if progress_callback is not None:
+                progress_callback(profile_stage, str(result.get("status", "unknown")))
         minimal, detailed = profile_results["minimal"], profile_results["detailed"]
         profile_identity_match = (
             minimal.get("prepare") is not None

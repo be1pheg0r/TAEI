@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -80,6 +81,141 @@ def test_backend_configuration_and_generation_interface_is_stable():
     assert callable(backend.synchronize)
     assert callable(backend.generate)
     assert callable(backend.close)
+
+
+def test_missing_model_fails_before_loading_inference_stack(tmp_path, monkeypatch):
+    from taei.nano_dataset import engine
+
+    def unexpected_upstream_load(*_):
+        raise AssertionError("inference stack loaded for missing model")
+
+    monkeypatch.setattr(engine, "_upstream_root", lambda: tmp_path)
+    monkeypatch.setattr(engine, "verify_pinned_source", lambda _: {})
+    monkeypatch.setattr(engine.importlib, "import_module", unexpected_upstream_load)
+    backend = engine.NanoVLLMBackend(
+        model_path=str(tmp_path / "missing"),
+        engine_config={},
+        prefix_cache_mode="on",
+        scheduler_mode="upstream_dynamic",
+        seed=42,
+        emit=lambda *_: None,
+    )
+    with pytest.raises(FileNotFoundError, match="model directory"):
+        backend.prepare()
+
+
+def _install_fake_model_runner(monkeypatch, runner_class):
+    from types import SimpleNamespace
+
+    calls = []
+
+    class FakeCuda:
+        @staticmethod
+        def set_device(device):
+            calls.append(("set_device", device))
+
+    class FakeTorch:
+        cuda = FakeCuda()
+
+        @staticmethod
+        def device(kind, index):
+            return (kind, index)
+
+    def original_init(*args, **kwargs):
+        calls.append(("dist_init", args, kwargs))
+
+    FakeTorch.distributed = SimpleNamespace(init_process_group=original_init)
+    monkeypatch.setitem(sys.modules, "torch", FakeTorch)
+    package = types.ModuleType("nanovllm")
+    package.__path__ = []
+    engine_package = types.ModuleType("nanovllm.engine")
+    engine_package.__path__ = []
+    model_runner = types.ModuleType("nanovllm.engine.model_runner")
+    model_runner.__dict__["ModelRunner"] = runner_class
+    monkeypatch.setitem(sys.modules, "nanovllm", package)
+    monkeypatch.setitem(sys.modules, "nanovllm.engine", engine_package)
+    monkeypatch.setitem(sys.modules, "nanovllm.engine.model_runner", model_runner)
+    return FakeTorch, original_init, calls
+
+
+def test_spawned_model_runner_passes_rank_device_to_distributed_init(monkeypatch):
+    from taei.nano_dataset.engine import _create_device_bound_model_runner
+
+    class FakeRunner:
+        def __init__(self, config, rank, event):
+            import torch
+
+            torch.distributed.init_process_group(
+                "nccl", "tcp://localhost:2333", world_size=4, rank=rank
+            )
+
+    fake_torch, original_init, calls = _install_fake_model_runner(
+        monkeypatch, FakeRunner
+    )
+    result = _create_device_bound_model_runner(object(), 3, object())
+
+    assert isinstance(result, FakeRunner)
+    assert calls == [
+        ("set_device", 3),
+        (
+            "dist_init",
+            ("nccl", "tcp://localhost:2333"),
+            {"world_size": 4, "rank": 3, "device_id": ("cuda", 3)},
+        ),
+    ]
+    assert fake_torch.distributed.init_process_group is original_init
+
+
+def test_spawned_model_runner_restores_distributed_init_after_constructor_error(
+    monkeypatch,
+):
+    from taei.nano_dataset.engine import _create_device_bound_model_runner
+
+    class BrokenRunner:
+        def __init__(self, config, rank, event):
+            import torch
+
+            torch.distributed.init_process_group("nccl", rank=rank)
+            raise RuntimeError("runner failed")
+
+    fake_torch, original_init, calls = _install_fake_model_runner(
+        monkeypatch, BrokenRunner
+    )
+    with pytest.raises(RuntimeError, match="runner failed"):
+        _create_device_bound_model_runner(object(), 2, object())
+
+    assert calls[-1] == (
+        "dist_init",
+        ("nccl",),
+        {"rank": 2, "device_id": ("cuda", 2)},
+    )
+    assert fake_torch.distributed.init_process_group is original_init
+
+
+def test_spawned_model_runner_preserves_explicit_distributed_device_id(monkeypatch):
+    from taei.nano_dataset.engine import _create_device_bound_model_runner
+
+    explicit_device = ("cuda", 7)
+
+    class ExplicitRunner:
+        def __init__(self, config, rank, event):
+            import torch
+
+            torch.distributed.init_process_group(
+                "nccl", rank=rank, device_id=explicit_device
+            )
+
+    fake_torch, original_init, calls = _install_fake_model_runner(
+        monkeypatch, ExplicitRunner
+    )
+    _create_device_bound_model_runner(object(), 3, object())
+
+    assert calls[-1] == (
+        "dist_init",
+        ("nccl",),
+        {"rank": 3, "device_id": explicit_device},
+    )
+    assert fake_torch.distributed.init_process_group is original_init
 
 
 def test_pinned_upstream_scheduler_and_block_manager_run_on_cpu():

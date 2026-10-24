@@ -12,10 +12,12 @@
 from __future__ import annotations
 
 import codecs
+import contextvars
 import os
 import select
 import sys
 import threading
+import time
 from collections.abc import Mapping
 from contextlib import contextmanager, suppress
 from io import TextIOBase
@@ -25,7 +27,20 @@ from typing import Any
 from dotenv import load_dotenv
 from loguru import logger
 from rich.console import Console
-from rich.progress import Progress
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
+from rich.table import Column
+
+_CAPTURED_TTY: contextvars.ContextVar[tuple[bool, bool] | None] = (
+    contextvars.ContextVar("taei_captured_tty", default=None)
+)
 
 
 class _TeeTextStream(TextIOBase):
@@ -87,6 +102,11 @@ def capture_output(log_path: str | Path):
     log_file = path.open("w", encoding="utf-8", buffering=1)
     lock = threading.Lock()
     original_streams = (sys.stdout, sys.stderr)
+    captured_tty = (
+        bool(getattr(original_streams[0], "isatty", lambda: False)()),
+        bool(getattr(original_streams[1], "isatty", lambda: False)()),
+    )
+    tty_token = _CAPTURED_TTY.set(captured_tty)
     fds: tuple[int, int] | None = None
     saved_fds: list[int] = []
     pipe_fds: list[tuple[int, int]] = []
@@ -206,6 +226,7 @@ def capture_output(log_path: str | Path):
                 if console_errors:
                     raise console_errors[0]
     finally:
+        _CAPTURED_TTY.reset(tty_token)
         log_file.flush()
         log_file.close()
 
@@ -239,14 +260,122 @@ def _logging_options(config: Any) -> tuple[Mapping[str, Any], bool]:
     return nested, clearml_enabled
 
 
+def _terminal_ui_enabled(*, stderr: bool = True) -> bool:
+    if "NO_COLOR" in os.environ or os.getenv("TERM", "").lower() == "dumb":
+        return False
+    captured = _CAPTURED_TTY.get()
+    if captured is not None:
+        return captured[1 if stderr else 0]
+    stream = sys.stderr if stderr else sys.stdout
+    return bool(getattr(stream, "isatty", lambda: False)())
+
+
 def rich_console(*, markup: bool = True, stderr: bool = True) -> Console:
     """Create the Rich console used for styled log output."""
-    return Console(stderr=stderr, markup=markup, highlight=False)
+    return Console(
+        stderr=stderr,
+        markup=markup,
+        highlight=False,
+        force_terminal=_terminal_ui_enabled(stderr=stderr),
+    )
 
 
 def progress(**kwargs: Any) -> Progress:
     """Create a Rich progress bar, suitable for use as a context manager."""
     return Progress(console=rich_console(), **kwargs)
+
+
+class _ExperimentProgress:
+    """Truthful work-unit counter with live TTY and bounded plain renderers."""
+
+    def __init__(self, total: int, label: str) -> None:
+        if total < 0:
+            raise ValueError("progress total must not be negative")
+        self.total = total
+        self.label = label
+        self.completed = 0
+        self._started_at = 0.0
+        self._last_stage: str | None = None
+        self._console = rich_console()
+        self._live: Progress | None = None
+        self._task_id: Any = None
+
+    def __enter__(self) -> _ExperimentProgress:
+        self._started_at = time.monotonic()
+        if self._console.is_terminal:
+            self._live = Progress(
+                SpinnerColumn(),
+                TextColumn(
+                    "{task.description}",
+                    table_column=Column(
+                        max_width=32, no_wrap=True, overflow="ellipsis"
+                    ),
+                ),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TimeElapsedColumn(),
+                TimeRemainingColumn(),
+                console=self._console,
+                transient=False,
+            )
+            self._live.start()
+            self._task_id = self._live.add_task(self.label, total=self.total)
+        else:
+            self._console.print(f"{self.label} started: 0/{self.total}")
+        return self
+
+    def stage(self, description: str) -> None:
+        if description == self._last_stage:
+            return
+        self._last_stage = description
+        text = f"{self.label}: {description} ({self.completed}/{self.total} completed)"
+        if self._live is not None:
+            self._live.update(self._task_id, description=text)
+        else:
+            self._console.print(text)
+
+    def advance(self, outcome: str) -> None:
+        self.completed = min(self.completed + 1, self.total)
+        if self._live is not None:
+            self._live.update(self._task_id, advance=1)
+            self._live.update(
+                self._task_id,
+                description=(
+                    f"{self.label}: {self.completed}/{self.total} completed ({outcome})"
+                ),
+            )
+        else:
+            self._console.print(
+                f"{self.label}: {self.completed}/{self.total} completed ({outcome})"
+            )
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        status = (
+            "finished"
+            if exc is None
+            else "interrupted"
+            if isinstance(exc, KeyboardInterrupt)
+            else "failed"
+        )
+        elapsed = time.monotonic() - self._started_at
+        if self._live is not None:
+            if exc is not None:
+                self._live.update(self._task_id, description=f"{self.label}: {status}")
+            self._live.stop()
+            self._console.print(
+                f"{self.label} {status}: {self.completed}/{self.total} completed "
+                f"in {elapsed:.1f}s"
+            )
+        else:
+            self._console.print(
+                f"{self.label} {status}: {self.completed}/{self.total} completed "
+                f"in {elapsed:.1f}s"
+            )
+
+
+def experiment_progress(total: int, label: str) -> _ExperimentProgress:
+    """Track real completed work; use a live Rich display only on a capable TTY."""
+    return _ExperimentProgress(total, label)
 
 
 def configure_logging(

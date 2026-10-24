@@ -7,14 +7,13 @@ hardware_profile:
   source_requirements_document_id: b0d87b1f-2006-4d92-8fbf-2efc72375b3c
   source_requirements_revision: 16
   experiment_name: nano_vllm_dataset_rtx_a4000_tp2
-  output_root: outputs/nano_vllm_dataset_rtx_a4000_tp2/runs
 engine:
   tensor_parallel_size: 2
   # Conservative profile: avoid unverified CUDA-graph replay under TP2.
   enforce_eager: true
 dataset:
-  output_root: ${hardware_profile.output_root}
-  overhead_output_root: outputs/nano_vllm_dataset_rtx_a4000_tp2/overhead
+  output_root: ${hydra:runtime.output_dir}/runs
+  overhead_output_root: ${hydra:runtime.output_dir}/overhead
 experiment:
   name: ${hardware_profile.experiment_name}
   description: RTX A4000 TP2 hardware derivative; preserves source workload and scheduler/cache semantics.

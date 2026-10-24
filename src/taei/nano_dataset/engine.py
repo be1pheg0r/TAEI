@@ -180,6 +180,30 @@ def load_pinned_cpu_primitives(
     return result
 
 
+def _create_device_bound_model_runner(config: Any, rank: int, event: Any) -> Any:
+    """Bind each local CUDA rank before pinned upstream initializes NCCL."""
+    import torch
+
+    torch.cuda.set_device(rank)
+    runner_module = importlib.import_module("nanovllm.engine.model_runner")
+    original_init = torch.distributed.init_process_group
+
+    def init_with_device(*args: Any, **kwargs: Any) -> Any:
+        # The pinned runner supplies backend/init_method positionally and the
+        # remaining arguments by keyword. Bind NCCL explicitly: set_device alone
+        # does not set ProcessGroup.bound_device_id in PyTorch 2.14.
+        backend = args[0] if args else kwargs.get("backend")
+        if backend == "nccl" and len(args) < 9 and kwargs.get("device_id") is None:
+            kwargs["device_id"] = torch.device("cuda", rank)
+        return original_init(*args, **kwargs)
+
+    torch.distributed.init_process_group = init_with_device
+    try:
+        return runner_module.ModelRunner(config, rank, event)
+    finally:
+        torch.distributed.init_process_group = original_init
+
+
 class NanoVLLMBackend:
     """Run one real nano-vLLM generate call and emit host-observed traces."""
 
@@ -255,6 +279,10 @@ class NanoVLLMBackend:
             raise RuntimeError("backend already prepared")
         root = _upstream_root()
         self._source_hashes = verify_pinned_source(root)
+        if not Path(self.model_path).is_dir():
+            raise FileNotFoundError(
+                f"local model directory not found: {self.model_path}"
+            )
         # GPU-bound imports occur only after the source pin is verified.
         engine_config = dict(self.engine_config)
         engine_config.setdefault("tensor_parallel_size", 1)
@@ -279,8 +307,16 @@ class NanoVLLMBackend:
                 f"unsupported nano-vLLM engine config keys: {sorted(unknown)}"
             )
         llm_module = importlib.import_module("nanovllm.llm")
+        engine_module = importlib.import_module("nanovllm.engine.llm_engine")
+        original_model_runner = engine_module.ModelRunner
         try:
-            self.engine = llm_module.LLM(self.model_path, **engine_config)
+            # Pinned LLMEngine passes this top-level callable to spawn. Its worker
+            # invocation binds the local rank before ModelRunner's NCCL setup.
+            engine_module.__dict__["ModelRunner"] = _create_device_bound_model_runner
+            try:
+                self.engine = llm_module.LLM(self.model_path, **engine_config)
+            finally:
+                engine_module.__dict__["ModelRunner"] = original_model_runner
             self._warm_and_reset()
             # Reset sampling RNG after warmup, so each measured run starts at seed.
             import torch

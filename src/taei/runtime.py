@@ -112,13 +112,17 @@ def run_experiment(config: DictConfig, run: Callable[[DictConfig], dict]) -> dic
                     )
                     owned_task = True
 
-                logger.info("experiment={} status=started", config.experiment.name)
+                logger.info("Starting experiment: {}", config.experiment.name)
                 metrics = run(config)
                 log_metrics(metrics)
                 (output_dir / "results.json").write_text(
                     json.dumps(metrics), encoding="utf-8"
                 )
-                logger.info("experiment={} status=finished", config.experiment.name)
+                logger.info(
+                    "Finished experiment: {} · results: {}",
+                    config.experiment.name,
+                    output_dir / "results.json",
+                )
                 if owned_task and task is not None:
                     close_attempted = True
                     task.close()

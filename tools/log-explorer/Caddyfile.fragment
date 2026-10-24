@@ -1,8 +1,5 @@
 logs.87.120.84.200.sslip.io {
   encode zstd gzip
-  request_body {
-    max_size 26MB
-  }
   header {
     X-Content-Type-Options nosniff
     Referrer-Policy no-referrer

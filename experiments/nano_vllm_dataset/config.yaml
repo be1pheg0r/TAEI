@@ -15,12 +15,12 @@ experiment:
 mode: plan # plan | preflight | download | overhead | run
 dataset:
   model_path: ${oc.env:TAEI_QWEN3_0_6B_PATH,${oc.env:HOME}/.cache/taei/models/Qwen3-0.6B}
-  output_root: outputs/nano_vllm_dataset/runs
+  output_root: ${hydra:runtime.output_dir}/runs
   order_seed: 20261023
   run_limit: 0 # 0 means all 24; set 1 for a manual smoke run
   attempt_timeout_s: 1800 # Per-attempt hard timeout; 30 minutes.
   calibration_report: null # path to a persisted separate overhead report
-  overhead_output_root: outputs/nano_vllm_dataset/overhead
+  overhead_output_root: ${hydra:runtime.output_dir}/overhead
   overhead_workload: S
   overhead_seed: 42
   overhead_pair_count: 1

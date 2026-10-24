@@ -103,7 +103,7 @@ def test_dummy_cli_override_is_saved_as_metrics_and_metadata(tmp_path: Path) -> 
         ("_template", ("iterations_completed", "synthetic_total")),
     ],
 )
-def test_cli_logs_each_final_metric_once(
+def test_cli_logs_one_compact_final_metric_summary(
     tmp_path: Path, name: str, metric_names: tuple[str, ...]
 ) -> None:
     result = run_script(
@@ -113,8 +113,9 @@ def test_cli_logs_each_final_metric_once(
     )
     assert result.returncode == 0, result.stderr
     output = result.stdout + result.stderr
+    assert output.count("metrics: ") == 1
     for metric_name in metric_names:
-        assert output.count(f"metric {metric_name}=") == 1
+        assert f"{metric_name}=" in output
 
 
 def test_dummy_multirun_records_each_override_in_separate_run(tmp_path: Path) -> None:

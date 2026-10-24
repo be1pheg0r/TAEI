@@ -35,6 +35,10 @@ def test_sample_round_trip_and_metadata():
         "run_count": 1,
         "accepted_count": 0,
         "record_count": len(body["records"]),
+        "attempt_count": 1,
+        "record_preview_count": len(body["records"]),
+        "record_preview_limit": 500,
+        "records_are_preview": False,
         "warnings": [],
     }
     assert body["runs"][0]["run_id"]
@@ -102,7 +106,7 @@ def test_health():
     assert client.get("/api/health").json() == {"status": "ok"}
 
 
-def test_declared_oversize_rejected_before_multipart_parser():
+def test_unbounded_request_body_is_not_rejected_by_old_26mib_guard():
     with patch("starlette.requests.Request.form", side_effect=AssertionError("parsed")):
         response = client.post(
             "/api/analyze",
@@ -112,7 +116,7 @@ def test_declared_oversize_rejected_before_multipart_parser():
                 "content-length": str(26 * 1024 * 1024 + 1),
             },
         )
-    assert response.status_code == 413
+    assert response.status_code != 413
 
 
 def test_analyze_accepts_valid_upload():
@@ -122,3 +126,74 @@ def test_analyze_accepts_valid_upload():
     )
     assert response.status_code == 200
     assert response.json()["archive"]["files"][0]["name"] == "a.log"
+
+
+def test_large_archive_limits_are_not_fixed_upload_or_member_caps():
+    import app as module
+
+    assert module.MAX_UPLOAD is None
+    assert module.MAX_MEMBER is None
+    assert module.MAX_EXPANDED is None
+    assert module.MAX_FILES is None
+
+
+def test_encrypted_rar_members_are_rejected(tmp_path, monkeypatch):
+    import app as module
+    import rarfile
+
+    class Info:
+        filename = "secret.json"
+        file_size = 1
+        compress_size = 1
+        mode = 0
+        file_redir = None
+
+        def is_dir(self):
+            return False
+
+        def is_symlink(self):
+            return False
+
+        def needs_password(self):
+            return True
+
+    class Archive:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def infolist(self):
+            return [Info()]
+
+    monkeypatch.setattr(rarfile, "RarFile", Archive)
+    archive_path = tmp_path / "encrypted.rar"
+    archive_path.write_bytes(b"Rar!\x1a\x07\x00")
+    with pytest.raises(ValueError, match="Encrypted RAR"):
+        module._analyze_path(archive_path, "encrypted.rar")
+
+
+def test_rar_magic_is_detected_and_read_from_disk(tmp_path):
+    import app as module
+    from libarchive.exception import ArchiveError
+
+    archive_path = tmp_path / "probe.rar"
+    archive_path.write_bytes(b"Rar!\x1a\x07\x00")
+    with pytest.raises(ArchiveError):
+        module._analyze_path(archive_path, "probe.rar")
+
+
+def test_large_row_sets_report_exact_totals_and_bounded_previews():
+    rows = "".join(json.dumps({"step_id": f"s{i}"}) + "\n" for i in range(700))
+    result = _analyze(make_zip({"steps.jsonl": rows}), "many.zip")
+    assert len(result["records"]) == 500
+    assert result["summary"]["record_count"] == 700
+    assert result["archive"]["files"][0]["records"] == 700
+    assert result["tables"]["_meta"]["counts"]["steps"] == 700
+    assert len(result["tables"]["steps"]) == 500
+    assert result["tables"]["_meta"]["preview_limit"] == 500
+    assert result["tables"]["_meta"]["is_preview"] is True

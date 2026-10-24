@@ -8,6 +8,8 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=67108864,mode=1777
+    volumes:
+      - upload-spool:/var/spool/log-explorer
     cap_drop:
       - ALL
     security_opt:
@@ -30,3 +32,5 @@ networks:
   edge:
     external: true
     name: outline-stack_edge
+volumes:
+  upload-spool:
