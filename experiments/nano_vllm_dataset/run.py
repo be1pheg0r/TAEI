@@ -42,6 +42,11 @@ ENGINE_PROFILES = {
         "tensor_parallel_size": 2,
         "enforce_eager": True,
     },
+    "rtx_a4000_tp2_qwen3_8b": {
+        **PILOT_ENGINE,
+        "tensor_parallel_size": 2,
+        "enforce_eager": True,
+    },
 }
 
 
@@ -89,6 +94,11 @@ def _check_engine_config(cfg: DictConfig) -> dict:
             "outputs/nano_vllm_dataset_rtx_a4000_tp2/runs",
             True,
         ),
+        "rtx_a4000_tp2_qwen3_8b": (
+            "nano_vllm_dataset_rtx_a4000_tp2_qwen3_8b",
+            "outputs/nano_vllm_dataset_rtx_a4000_tp2_qwen3_8b/runs",
+            True,
+        ),
     }[profile_id]
     identity = (
         cfg.experiment.name,
@@ -107,6 +117,26 @@ def _check_engine_config(cfg: DictConfig) -> dict:
         raise ValueError(
             "stale inherited model upstream_config cannot label the selected model"
         )
+    if profile_id == "rtx_a4000_tp2_qwen3_8b":
+        expected_model = (
+            "Qwen3-8B",
+            "Qwen/Qwen3-8B",
+            "b968826d9c46dd6066d109eabc6255188de91218",
+            "Qwen/Qwen3-8B",
+        )
+        actual_model = (
+            cfg.model.name,
+            cfg.model.huggingface_id,
+            cfg.model.revision,
+            cfg.download.repo_id,
+        )
+        if actual_model != expected_model:
+            raise ValueError(
+                "Qwen3-8B profile model identity differs: "
+                f"expected={expected_model}, actual={actual_model}"
+            )
+        if int(cfg.engine.max_model_len) > 40960:
+            raise ValueError("Qwen3-8B max_model_len exceeds pinned config limit 40960")
     return {
         key: cfg.engine[key] for key in cfg.engine if key not in {"backend", "model"}
     }
