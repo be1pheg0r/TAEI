@@ -10,6 +10,8 @@ hardware_profile:
   output_root: outputs/nano_vllm_dataset_rtx_a4000_tp2/runs
 engine:
   tensor_parallel_size: 2
+  # Conservative profile: avoid unverified CUDA-graph replay under TP2.
+  enforce_eager: true
 dataset:
   output_root: ${hardware_profile.output_root}
   overhead_output_root: outputs/nano_vllm_dataset_rtx_a4000_tp2/overhead

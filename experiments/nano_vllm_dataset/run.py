@@ -22,8 +22,9 @@ from hydra.core.hydra_config import HydraConfig
 from loguru import logger
 from omegaconf import DictConfig
 
+from taei.nano_dataset.isolation import run_isolated
 from taei.nano_dataset.model_download import ensure_model
-from taei.nano_dataset.orchestrator import build_plan, preflight, run_attempt
+from taei.nano_dataset.orchestrator import build_plan, preflight
 from taei.runtime import run_experiment
 
 PILOT_ENGINE = {
@@ -36,7 +37,11 @@ PILOT_ENGINE = {
 }
 ENGINE_PROFILES = {
     "source_tp4": {**PILOT_ENGINE},
-    "rtx_a4000_tp2": {**PILOT_ENGINE, "tensor_parallel_size": 2},
+    "rtx_a4000_tp2": {
+        **PILOT_ENGINE,
+        "tensor_parallel_size": 2,
+        "enforce_eager": True,
+    },
 }
 
 
@@ -238,20 +243,30 @@ def run(cfg: DictConfig) -> dict:
             item["run_order"],
             item["condition_id"],
         )
-        summaries.append(
-            run_attempt(
-                item,
-                model_path,
-                engine_config,
-                cfg.dataset.output_root,
-                experiment_profile=dict(cfg.hardware_profile),
-                telemetry_interval_s=float(cfg.dataset.telemetry_interval_s),
-                calibration_report=calibration,
-                calibration_report_path=str(cfg.dataset.calibration_report)
+        attempt_summary = run_isolated(
+            {
+                "run_spec": item,
+                "model_path": model_path,
+                "engine_config": engine_config,
+                "output_root": cfg.dataset.output_root,
+                "experiment_profile": dict(cfg.hardware_profile),
+                "telemetry_interval_s": float(cfg.dataset.telemetry_interval_s),
+                "calibration_report": calibration,
+                "calibration_report_path": str(cfg.dataset.calibration_report)
                 if cfg.dataset.calibration_report
                 else None,
-            )
+                "logging_config": {
+                    "logging": dict(cfg.get("logging", {})),
+                    "clearml": dict(cfg.get("clearml", {})),
+                },
+            },
+            timeout_s=float(cfg.dataset.attempt_timeout_s),
         )
+        summaries.append(attempt_summary)
+        if attempt_summary.get("status") != "success":
+            raise RuntimeError(
+                f"attempt failed; artifact={attempt_summary.get('path', 'unknown')}"
+            )
     identities = {
         key: sorted({item[key] for item in summaries if item.get(key) is not None})
         for key in ("hardware_id", "environment_id", "model_id")
