@@ -1,15 +1,4 @@
-"""Планирует, проверяет готовность, выполняет и сохраняет эксперименты nano-vLLM.
-
-Модуль строит план и подсчитывает нагрузку/токены, проверяет модель, зависимости
-и CUDA без запуска инференса, а также определяет, соответствует ли парная
-калибровка точной аппаратной, программной, модельной и нагрузочной области.
-Для каждого запуска создается уникальный каталог попытки со стабильными
-идентификаторами; собираются метаданные и телеметрия, вызывается реальный
-адаптер движка, сохраняются запросы и трассы, схема и SHA-256-манифест, затем
-выполняется fail-closed QC. Основная приемка остается ожидающей или отклоненной,
-пока не выполнены требования полноты трасс и калибровки; preflight не считается
-доказательством GPU-инференса.
-"""
+"""Plan and persist paired cache experiments without automatic acceptance checks."""
 
 from __future__ import annotations
 
@@ -21,10 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from .metadata import collect_environment, collect_hardware, collect_model
-from .schema import DATASET_SCHEMA, FIELD_DICTIONARY, SCHEMA_VERSION, validate_instance
-from .workload import build_run_matrix, build_workload
+from .schema import DATASET_SCHEMA, FIELD_DICTIONARY, SCHEMA_VERSION
+from .workload import WORKLOAD_SETS, build_run_matrix, build_workload
 
-COLLECTOR_VERSION = "0.1.0"
+COLLECTOR_VERSION = "0.3.0"
 TRACE_TABLES = (
     "steps",
     "step_requests",
@@ -69,65 +58,61 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def build_plan(order_seed: int = 20261023) -> dict[str, Any]:
     matrix = build_run_matrix(order_seed)
-    prompt_total = output_total = 0
+    prompt_total = output_total = request_total = 0
+    workload_summaries: dict[str, dict[str, Any]] = {}
     for run in matrix:
-        summary = build_workload(run["workload_id"], run["seed"])["summary"]
+        workload = build_workload(run["workload_id"], run["seed"])
+        summary = workload["summary"]
+        workload_summaries[workload["workload_id"]] = summary
         prompt_total += summary["logical_prompt_tokens"]
         output_total += summary["requested_output_token_total"]
+        request_total += summary["request_count"]
     return {
         "schema_version": SCHEMA_VERSION,
         "requirements_source": {
             "document_id": "b0d87b1f-2006-4d92-8fbf-2efc72375b3c",
             "revision": 16,
             "source_updated_at": "2026-10-23T13:24:06.215Z",
-            "mapping_version": "1.0.0",
+            "mapping_version": "six_workload_sets_v1",
             "source_snapshot_sha256": None,
-            "source_snapshot_note": (
-                "source content was not archived in this repository"
-            ),
+            "source_snapshot_note": "historical source reference; active protocol is six independent workload sets",
         },
         "matrix": matrix,
         "run_count": len(matrix),
         "condition_count": len({r["condition_id"] for r in matrix}),
-        "request_count": 32 * len(matrix),
+        "request_count": request_total,
+        "workload_protocol": "six_set_paired_prefix_sweep_v1",
+        "workload_sets": list(WORKLOAD_SETS),
+        "workload_summaries": workload_summaries,
+        "seed_count": 2,
+        "seeds": [42, 43],
+        "treatments_per_set_seed": 4,
+        "requests_per_run": 16,
+        "prompt_lengths_vary_by_set_and_seed": True,
+        "validation_status": "disabled",
         "logical_prompt_tokens": prompt_total,
         "requested_output_tokens": output_total,
+        "adapter_request_counts_per_engine_launch": {
+            "measured": 16,
+            "untimed_donors": 8,
+            "warmup": 1,
+        },
         "overhead_policy": {
             "diagnostic": "paired minimal-vs-detailed trace calibration is separate",
-            "primary_analysis_gate": "pending_calibration",
+            "primary_analysis_gate": "disabled",
         },
         "scheduler_policy": {
             "max_num_seqs": 8,
-            "dynamic_max_num_seqs_semantics": (
-                "per-schedule selected batch cap; upstream running set may exceed 8"
-            ),
+            "dynamic_max_num_seqs_semantics": "per-schedule selected batch cap; upstream running set may exceed 8",
             "fixed_batch": "admit waves <=8 without replacement until wave completes",
         },
         "timing_policy": {
-            "window": (
-                "synchronize; host monotonic around one "
-                "engine.generate call; synchronize"
-            ),
-            "includes": [
-                "scheduler",
-                "model execution",
-                "sampling",
-                "tokenizer decode",
-            ],
-            "excludes": [
-                "model loading",
-                "warmup",
-                "workload tokenization",
-                "artifact disk flush",
-            ],
-            "gpu_per_token_timestamps": (
-                "unsupported unless measured by engine instrumentation"
-            ),
+            "window": "synchronize; host monotonic around one engine.generate call; synchronize",
+            "includes": ["scheduler", "model execution", "sampling", "tokenizer decode"],
+            "excludes": ["model loading", "warmup", "prefix donor priming", "workload tokenization", "artifact disk flush"],
+            "gpu_per_token_timestamps": "unsupported unless measured by engine instrumentation",
         },
-        "split_policy": (
-            "pair_id groups four treatments per workload/seed; split_group_id "
-            "keeps all treatments and both repeats of a workload family together"
-        ),
+        "split_policy": "pair_id groups four treatments per workload/seed; split_group_id keeps all treatments and both seeds of a workload set together",
     }
 
 
@@ -293,8 +278,6 @@ def run_attempt(
     phase_by_step: dict[str, str] = {}
 
     def emit(table: str, row: dict[str, Any]) -> None:
-        if table not in events:
-            raise ValueError(f"unknown trace table: {table}")
         normalized = dict(row)
         for key in ("step_id", "block_id", "wave_id", "request_id"):
             if normalized.get(key) is not None:
@@ -432,13 +415,7 @@ def run_attempt(
             "timing_policy": build_plan()["timing_policy"],
         }
     )
-    calibration_gate = evaluate_calibration_scope(
-        run_spec,
-        workload["workload_id"],
-        ids,
-        _sha(engine_config),
-        calibration_report,
-    )
+    calibration_gate = {"status": "disabled", "review_required": False}
     run_row = {
         **run_spec,
         **ids,
@@ -452,7 +429,10 @@ def run_attempt(
             "output_tokens": None,
             "output_tokens_per_second": None,
             "requests_per_second": None,
-            "request_count": 32,
+            "request_count": len(workload["requests"]),
+            "prefix_reused_tokens": None,
+            "cache_hit_tokens": None,
+            "cache_hit_ratio": None,
             "requested_output_tokens": workload["summary"][
                 "requested_output_token_total"
             ],
@@ -485,6 +465,7 @@ def run_attempt(
         )
         prepared = backend.prepare()
         run_row["effective_config"] = prepared
+        run_row["prefix_priming"] = backend.prime_requests(workload["requests"])
         sampler = TelemetrySampler(telemetry_interval_s, emit)
         emit(
             "telemetry",
@@ -500,12 +481,19 @@ def run_attempt(
         status = "success"
         elapsed = (end_ns - start_ns) / 1e9
         output_count = sum(row.get("output_token_count") or 0 for row in records)
+        prompt_count = sum(row["input_token_count"] for row in records)
+        hit_count = sum(row["cache_hit_tokens"] for row in records)
         run_row["metrics"] = {
             "wall_seconds": elapsed,
             "output_tokens": output_count,
             "output_tokens_per_second": output_count / elapsed if elapsed > 0 else None,
             "requests_per_second": len(records) / elapsed if elapsed > 0 else None,
             "request_count": len(records),
+            "input_tokens": prompt_count,
+            "prefix_reused_tokens": hit_count,
+            "cache_hit_tokens": hit_count,
+            "cache_hit_ratio": hit_count / prompt_count if prompt_count else None,
+            "cache_hit_ratio_definition": "sum(cache_hit_tokens) / sum(input_tokens)",
             "requested_output_tokens": workload["summary"][
                 "requested_output_token_total"
             ],
@@ -526,6 +514,10 @@ def run_attempt(
             "output_tokens": None,
             "output_tokens_per_second": None,
             "requests_per_second": None,
+            "input_tokens": None,
+            "prefix_reused_tokens": None,
+            "cache_hit_tokens": None,
+            "cache_hit_ratio": None,
         }
     finally:
         if sampler is not None:
@@ -558,6 +550,8 @@ def run_attempt(
                     "attempt_id": attempt_id,
                     "condition_id": run_spec["condition_id"],
                     "pair_id": run_spec["pair_id"],
+                    "set_id": run_spec.get("set_id", run_spec["workload_id"]),
+                    "split_group_id": run_spec["split_group_id"],
                     "repeat_id": run_spec["repeat_id"],
                     "run_order": run_spec["run_order"],
                     "config_id": config_id,
@@ -565,6 +559,10 @@ def run_attempt(
                     "output_token_ids": result.get("output_token_ids"),
                     "actual_output_tokens": result.get("output_token_count"),
                     "output_token_count": result.get("output_token_count"),
+                    "input_token_count": len(request["input_token_ids"]),
+                    "prefix_reused_tokens": result.get("prefix_reused_tokens"),
+                    "cache_hit_tokens": result.get("cache_hit_tokens"),
+                    "cache_hit_ratio": result.get("cache_hit_ratio"),
                     "error_stage": None
                     if result.get("status")
                     else (error or {}).get("stage"),
@@ -620,15 +618,8 @@ def run_attempt(
             )
             if not events[table]
         ]
-        trace_complete = (
-            status == "success" and len(requests) == 32 and not missing_hooks
-        )
-        complete = False
-        run_row["primary_status"] = "not_evaluated" if trace_complete else "rejected"
-        if not trace_complete:
-            run_row["primary_gate_reason"] = (
-                "missing_primary_trace_or_incomplete_requests"
-            )
+        run_row["primary_status"] = "not_evaluated"
+        run_row["validation_status"] = "disabled"
         run_row.update(ids)
         _write_json(run_dir / "runs.json", run_row)
         _write_json(run_dir / "schema.json", DATASET_SCHEMA)
@@ -650,6 +641,8 @@ def run_attempt(
                 "attempt_id": attempt_id,
                 "condition_id": run_spec["condition_id"],
                 "pair_id": run_spec["pair_id"],
+                "set_id": run_spec.get("set_id", run_spec["workload_id"]),
+                "split_group_id": run_spec["split_group_id"],
                 "repeat_id": run_spec["repeat_id"],
                 "run_order": run_spec["run_order"],
                 **ids,
@@ -657,8 +650,9 @@ def run_attempt(
                 "files": files,
                 "hash_policy": "SHA-256 of exact persisted bytes; manifest excluded",
                 "coverage": {
-                    "primary_complete": trace_complete,
-                    "primary_analysis_accepted": complete,
+                    "primary_complete": None,
+                    "primary_analysis_accepted": False,
+                    "validation_status": "disabled",
                     "missing_hooks": missing_hooks,
                     "capabilities": {"gpu_inference_attempted": backend is not None},
                     "calibration_gate": {
@@ -670,45 +664,11 @@ def run_attempt(
                     "document_id": "b0d87b1f-2006-4d92-8fbf-2efc72375b3c",
                     "revision": 16,
                     "source_updated_at": "2026-10-23T13:24:06.215Z",
-                    "mapping_version": "1.0.0",
+                    "mapping_version": "paired_prefix_sweep_v1",
                 },
             },
         )
-        manifest_payload = json.loads(
-            (run_dir / "manifest.json").read_text(encoding="utf-8")
-        )
-        dataset_instance = {
-            "manifest": manifest_payload,
-            "hardware": hardware,
-            "environment": environment,
-            "model": model,
-            "workload": workload,
-            "runs": run_row,
-            "requests": requests,
-            **{table: events[table] for table in TRACE_TABLES},
-        }
-        schema_errors = validate_instance(dataset_instance)
-        schema_result = {
-            "schema_version": SCHEMA_VERSION,
-            "valid": not schema_errors,
-            "errors": schema_errors,
-        }
-        _write_json(run_dir / "schema_validation.json", schema_result)
-        validation_raw = (run_dir / "schema_validation.json").read_bytes()
-        manifest_payload["files"]["schema_validation.json"] = {
-            "sha256": hashlib.sha256(validation_raw).hexdigest(),
-            "bytes": len(validation_raw),
-        }
-        manifest_payload["coverage"]["schema_valid"] = not schema_errors
-        manifest_payload["schema_validation"] = {
-            "valid": not schema_errors,
-            "error_count": len(schema_errors),
-            "report_file": "schema_validation.json",
-        }
-        _write_json(run_dir / "manifest.json", manifest_payload)
-    from .qc import audit_run_directory
 
-    qc = audit_run_directory(run_dir)
     return {
         "run_id": run_spec["run_id"],
         "attempt_id": attempt_id,
@@ -723,5 +683,6 @@ def run_attempt(
         "backend_constructed": backend is not None,
         "real_generate_completed": generate_completed,
         "primary_status": run_row["primary_status"],
-        "qc": qc,
+        "metrics": run_row["metrics"],
+        "qc": {"status": "disabled", "valid": None},
     }

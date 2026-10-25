@@ -16,4 +16,4 @@ dataset:
   overhead_output_root: ${hydra:runtime.output_dir}/overhead
 experiment:
   name: ${hardware_profile.experiment_name}
-  description: RTX A4000 TP2 hardware derivative; preserves source workload and scheduler/cache semantics.
+  description: RTX A4000 TP2 paired prefix-cache sweep from 512 to 4096 input tokens.

@@ -1,9 +1,9 @@
 # @package _global_
-# Qwen3-8B sibling profile; workload and runtime protocol match the A4000 TP2 profile.
+# Qwen3-8B sibling profile using the paired prefix sweep.
 hardware_profile:
   profile_id: rtx_a4000_tp2_qwen3_8b
   hardware_deviation: true
-  deviation_note: "Qwen3-8B model-identity derivative of RTX A4000 TP2; preserves the 24-run protocol"
+  deviation_note: "Qwen3-8B model-identity derivative of RTX A4000 TP2; paired prefix sweep"
   source_requirements_document_id: b0d87b1f-2006-4d92-8fbf-2efc72375b3c
   source_requirements_revision: 16
   experiment_name: nano_vllm_dataset_rtx_a4000_tp2_qwen3_8b
@@ -33,4 +33,4 @@ model:
 
 experiment:
   name: ${hardware_profile.experiment_name}
-  description: Qwen3-8B model-identity derivative of RTX A4000 TP2; preserves the exact 24-run workload and runtime protocol.
+  description: Qwen3-8B RTX A4000 TP2 paired prefix-cache sweep from 512 to 4096 input tokens.

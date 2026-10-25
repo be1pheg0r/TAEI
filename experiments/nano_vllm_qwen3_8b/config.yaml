@@ -1,0 +1,65 @@
+defaults:
+  - base
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://taei.conf
+
+experiment:
+  name: nano_vllm_qwen3_8b
+  description: Six independent paired prefix-cache workload sets for Qwen3-8B.
+
+mode: plan
+dataset:
+  model_path: ${oc.env:TAEI_QWEN3_8B_PATH,${oc.env:HOME}/.cache/taei/models/Qwen3-8B}
+  output_root: ${hydra:runtime.output_dir}/runs
+  order_seed: 20261023
+  run_limit: 0
+  attempt_timeout_s: 1800
+  calibration_report: null
+  overhead_output_root: ${hydra:runtime.output_dir}/overhead
+  overhead_workload: prefix_sweep_set_01
+  overhead_seed: 42
+  overhead_pair_count: 1
+  telemetry_interval_s: 1.0
+  requirements_document_id: b0d87b1f-2006-4d92-8fbf-2efc72375b3c
+  requirements_revision: 16
+
+download:
+  enabled: true
+  repo_id: Qwen/Qwen3-8B
+  revision: b968826d9c46dd6066d109eabc6255188de91218
+
+engine:
+  backend: nano_vllm
+  model: ${dataset.model_path}
+  tensor_parallel_size: 2
+  max_num_seqs: 8
+  max_num_batched_tokens: 16384
+  max_model_len: 4352
+  enforce_eager: true
+  gpu_memory_utilization: 0.9
+  kvcache_block_size: 256
+
+model:
+  name: Qwen3-8B
+  path: ${dataset.model_path}
+  family: qwen3
+  architecture: Qwen3ForCausalLM
+  huggingface_id: Qwen/Qwen3-8B
+  revision: b968826d9c46dd6066d109eabc6255188de91218
+  dtype: bfloat16
+  upstream_config: null
+
+hardware_profile:
+  name: qwen3_8b_tp2_eager
+  tensor_parallel_size: 2
+  enforce_eager: true
+
+logging:
+  level: INFO
+  markup: false
+  clearml: false
+clearml:
+  enabled: false

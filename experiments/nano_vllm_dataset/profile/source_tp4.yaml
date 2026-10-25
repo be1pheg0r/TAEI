@@ -1,5 +1,5 @@
 # @package _global_
-# Original source specification; unchanged TP4 pilot.
+# TP4 hardware selection for the paired prefix sweep.
 hardware_profile:
   profile_id: source_tp4
   hardware_deviation: false

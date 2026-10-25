@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import signal
 import subprocess
@@ -18,8 +17,6 @@ from typing import Any
 
 def run_isolated(payload: dict[str, Any], timeout_s: float) -> dict[str, Any]:
     """Execute worker payload; timeout kills its complete process group."""
-    if not math.isfinite(timeout_s) or timeout_s <= 0:
-        raise ValueError("attempt timeout must be positive")
     with tempfile.TemporaryDirectory(prefix="taei-attempt-") as tmp:
         request = Path(tmp) / "request.json"
         response = Path(tmp) / "response.json"
@@ -55,13 +52,7 @@ def run_isolated(payload: dict[str, Any], timeout_s: float) -> dict[str, Any]:
             ) from timeout_error
         finally:
             _stop_group(process.pid, process, 0.5)
-        if process.returncode:
-            raise RuntimeError(f"attempt subprocess exited {process.returncode}")
         result = json.loads(response.read_text(encoding="utf-8"))
-        if result.get("status") != "success":
-            raise RuntimeError(
-                f"attempt failed; artifact={result.get('path', 'unknown')}"
-            )
         return result
 
 

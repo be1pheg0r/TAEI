@@ -1,4 +1,4 @@
-# Exact pilot overrides: do not inherit base 8B/TP2/4096-token engine values.
+# Paired cache sweep; model and TP are selected by the hardware profile.
 defaults:
   - base
   - _self_
@@ -10,18 +10,18 @@ hydra:
 
 experiment:
   name: nano_vllm_dataset
-  description: Exact 24-run nano-vLLM dataset pilot; real inference only in mode=run.
+  description: Non-block-aligned paired prefix-cache sweep with varied hit fractions.
 
 mode: plan # plan | preflight | download | overhead | run
 dataset:
   model_path: ${oc.env:TAEI_QWEN3_0_6B_PATH,${oc.env:HOME}/.cache/taei/models/Qwen3-0.6B}
   output_root: ${hydra:runtime.output_dir}/runs
   order_seed: 20261023
-  run_limit: 0 # 0 means all 24; set 1 for a manual smoke run
+  run_limit: 0 # 0 means all 8 treatments/repeats; set 1 for a single run
   attempt_timeout_s: 1800 # Per-attempt hard timeout; 30 minutes.
-  calibration_report: null # path to a persisted separate overhead report
+  calibration_report: null # retained for old CLI compatibility; no acceptance gate
   overhead_output_root: ${hydra:runtime.output_dir}/overhead
-  overhead_workload: S
+  overhead_workload: prefix_sweep
   overhead_seed: 42
   overhead_pair_count: 1
   telemetry_interval_s: 1.0
@@ -39,7 +39,7 @@ engine:
   tensor_parallel_size: 4
   max_num_seqs: 8
   max_num_batched_tokens: 16384
-  max_model_len: 4096
+  max_model_len: 4352 # Up to 4096 input tokens plus generation
   enforce_eager: false # CUDA graphs enabled
   gpu_memory_utilization: 0.9
   kvcache_block_size: 256

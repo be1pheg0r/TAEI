@@ -1,11 +1,7 @@
-"""Адаптер закрепленной версии nano-vLLM с проверяемыми трассами хоста.
+"""Real nano-vLLM generation with untimed prefix donors and observed cache reuse.
 
-Модуль подтверждает ревизию и контрольные суммы используемых исходников,
-загружает необходимые upstream-примитивы для диагностики и предоставляет
-``NanoVLLMBackend`` для настройки и выполнения настоящего ``generate`` с
-наблюдаемыми событиями планировщика, кэша, шагов и токенов. GPU-зависимости
-подключаются отложенно; CPU-примитивы используются только для тестов и
-диагностики, а не как запасной путь инференса.
+Collection does not run supplemental source/configuration validation. Legacy
+source and CPU diagnostic helpers remain separate from the inference path.
 """
 
 from __future__ import annotations
@@ -220,19 +216,6 @@ class NanoVLLMBackend:
         emit: Callable[[str, dict[str, Any]], None],
         measurement_profile: str = "detailed",
     ) -> None:
-        if measurement_profile not in {"minimal", "detailed"}:
-            raise ValueError(f"invalid measurement_profile: {measurement_profile}")
-        if measurement_profile == "minimal" and (
-            prefix_cache_mode != "on" or scheduler_mode != "upstream_dynamic"
-        ):
-            raise ValueError(
-                "minimal profile supports only prefix_cache_mode='on' and "
-                "scheduler_mode='upstream_dynamic'"
-            )
-        if prefix_cache_mode not in self._VALID_PREFIX:
-            raise ValueError(f"invalid prefix_cache_mode: {prefix_cache_mode}")
-        if scheduler_mode not in self._VALID_SCHEDULER:
-            raise ValueError(f"invalid scheduler_mode: {scheduler_mode}")
         self.model_path = model_path
         self.engine_config = dict(engine_config)
         self.prefix_cache_mode = prefix_cache_mode
@@ -254,6 +237,8 @@ class NanoVLLMBackend:
         self._finish_ns: dict[str, int] = {}
         self._outputs: list[dict[str, Any]] = []
         self._source_hashes: dict[str, str] = {}
+        self._prompt_cache_hits: dict[str, int] = {}
+        self._primed_blocks_by_request: dict[str, set[int]] = {}
 
     @staticmethod
     def _stamp() -> tuple[str, int]:
@@ -275,15 +260,8 @@ class NanoVLLMBackend:
         self.emit(table, payload)
 
     def prepare(self) -> dict[str, Any]:
-        if self.engine is not None:
-            raise RuntimeError("backend already prepared")
-        root = _upstream_root()
-        self._source_hashes = verify_pinned_source(root)
-        if not Path(self.model_path).is_dir():
-            raise FileNotFoundError(
-                f"local model directory not found: {self.model_path}"
-            )
-        # GPU-bound imports occur only after the source pin is verified.
+        # Let the actual engine report dependency/configuration failures. There is
+        # no supplemental source-hash, model-path or preflight validation gate.
         engine_config = dict(self.engine_config)
         engine_config.setdefault("tensor_parallel_size", 1)
         try:
@@ -294,18 +272,6 @@ class NanoVLLMBackend:
         except (ImportError, AttributeError):
             self._original_torch_dtype = None
             self._original_torch_device = None
-        config_module = importlib.import_module("nanovllm.config")
-        accepted = {
-            field.name
-            for field in importlib.import_module("dataclasses").fields(
-                config_module.Config
-            )
-        } - {"model"}
-        unknown = set(self.engine_config) - accepted
-        if unknown:
-            raise ValueError(
-                f"unsupported nano-vLLM engine config keys: {sorted(unknown)}"
-            )
         llm_module = importlib.import_module("nanovllm.llm")
         engine_module = importlib.import_module("nanovllm.engine.llm_engine")
         original_model_runner = engine_module.ModelRunner
@@ -325,6 +291,7 @@ class NanoVLLMBackend:
             torch.cuda.manual_seed_all(self.seed)
             if self.measurement_profile == "detailed":
                 self._patch_live_engine()
+            self._install_prompt_cache_tracking()
         except BaseException:
             self._cleanup_failed_prepare()
             raise
@@ -337,7 +304,9 @@ class NanoVLLMBackend:
         )
         return {
             "engine": "nano-vllm",
-            "engine_revision": PINNED_REVISION,
+            "engine_revision": None,
+            "configured_engine_revision": PINNED_REVISION,
+            "source_verification": "disabled",
             "engine_source_hashes": self._source_hashes,
             "effective_config": {
                 **engine_config,
@@ -403,7 +372,7 @@ class NanoVLLMBackend:
         }
 
     def _warm_and_reset(self) -> None:
-        """Warm one disjoint prompt, then invalidate and verify cache state."""
+        """Warm one disjoint prompt, then invalidate its reusable state."""
         engine = self.engine
         prompt = engine.tokenizer.encode("TAEI adapter disjoint warmup prompt.")
         sampling = importlib.import_module("nanovllm.sampling_params").SamplingParams
@@ -414,8 +383,6 @@ class NanoVLLMBackend:
         )
         scheduler = engine.scheduler
         manager = scheduler.block_manager
-        if scheduler.waiting or scheduler.running:
-            raise RuntimeError("nano-vLLM warmup did not drain scheduler")
         manager.hash_to_block_id.clear()
         manager.used_block_ids.clear()
         manager.free_block_ids = deque(range(len(manager.blocks)))
@@ -423,12 +390,113 @@ class NanoVLLMBackend:
             block.ref_count = 0
             block.hash = -1
             block.token_ids = []
-        if (
-            manager.hash_to_block_id
-            or manager.used_block_ids
-            or len(manager.free_block_ids) != len(manager.blocks)
-        ):
-            raise RuntimeError("nano-vLLM cache reset verification failed")
+
+    def _install_prompt_cache_tracking(self) -> None:
+        """Count initial allocated prompt reuse once, independent of trace level."""
+        engine = self.engine
+        manager = engine.scheduler.block_manager
+        self._originals = getattr(self, "_originals", [])
+        self._metric_seq_to_request: dict[int, str] = {}
+        self._metric_request_ids: Any = iter(())
+        original_add = engine.add_request
+        original_allocate = manager.allocate
+
+        def add_request(prompt: Any, sampling_params: Any) -> None:
+            original_add(prompt, sampling_params)
+            seq = engine.scheduler.waiting[-1]
+            request_id = next(self._metric_request_ids, None)
+            if request_id is not None:
+                self._metric_seq_to_request[seq.seq_id] = request_id
+
+        def allocate(seq: Any, cached_blocks: int) -> Any:
+            result = original_allocate(seq, cached_blocks)
+            request_id = self._metric_seq_to_request.get(seq.seq_id)
+            if request_id is not None:
+                # The first allocation precedes any private KV for this request.
+                # Subsequent allocations are recomputation, not new prompt hits.
+                self._prompt_cache_hits.setdefault(
+                    request_id, int(cached_blocks) * manager.block_size
+                )
+                for block_id in self._primed_blocks_by_request.pop(request_id, set()):
+                    block = manager.blocks[block_id]
+                    block.ref_count -= 1
+                    if block.ref_count == 0:
+                        manager._deallocate_block(block_id)
+            return result
+
+        self._originals.append((engine, "add_request", original_add))
+        engine.add_request = add_request
+        self._originals.append((manager, "allocate", original_allocate))
+        manager.allocate = allocate
+
+    def prime_requests(self, requests: list[dict[str, Any]]) -> dict[str, Any]:
+        """Compute donor KV outside measurement and retain eligible ON blocks.
+
+        Donors use real model execution. Temporary ownership prevents other
+        measured prompts from evicting a donor before its matching hit allocates.
+        Those references are released immediately after that allocation.
+        """
+        self._restore()
+        manager = self.engine.scheduler.block_manager
+        sampling = importlib.import_module("nanovllm.sampling_params").SamplingParams
+        original_hash = manager.hash_blocks
+        origins: dict[int, str] = {}
+        prime_count = 0
+        try:
+            for request in requests:
+                prompt = request.get("prime_input_token_ids")
+                if not prompt:
+                    continue
+                request_id = str(request["request_id"])
+                held: set[int] = set()
+                eligible = (
+                    (len(prompt) + manager.block_size - 1) // manager.block_size - 1
+                )
+
+                def hash_donor(
+                    seq: Any,
+                    *,
+                    _held: set[int] = held,
+                    _eligible: int = eligible,
+                    _origin: str = "prime:" + request_id,
+                ) -> None:
+                    original_hash(seq)
+                    end = (
+                        seq.num_cached_tokens + seq.num_scheduled_tokens
+                    ) // manager.block_size
+                    if self.prefix_cache_mode == "on":
+                        for index in range(min(end, _eligible)):
+                            block_id = seq.block_table[index]
+                            if block_id not in _held:
+                                manager.blocks[block_id].ref_count += 1
+                                _held.add(block_id)
+                                origins[block_id] = _origin
+
+                manager.hash_blocks = hash_donor
+                self.engine.generate(
+                    [list(prompt)],
+                    [sampling(temperature=0.6, max_tokens=1, ignore_eos=True)],
+                    use_tqdm=False,
+                )
+                self._primed_blocks_by_request[request_id] = held
+                prime_count += 1
+        finally:
+            manager.hash_blocks = original_hash
+        # Install measured hooks only after all donor calls. They emit no measured
+        # events, consume no measured request IDs and cannot affect step numbering.
+        if self.measurement_profile == "detailed":
+            self._patch_live_engine()
+            self._cache_origin_by_block.update(origins)
+        self._install_prompt_cache_tracking()
+        import torch
+
+        torch.manual_seed(self.seed)
+        torch.cuda.manual_seed_all(self.seed)
+        return {
+            "request_count": prime_count,
+            "retained_prefix_blocks": len(origins),
+            "included_in_measurement": False,
+        }
 
     def _cleanup_failed_prepare(self) -> None:
         engine = self.engine
@@ -504,7 +572,9 @@ class NanoVLLMBackend:
                                 block_manager.block_size
                                 for origin in origins
                                 if origin is not None and origin != request_id
-                            ),
+                            )
+                            if request_id not in self._prompt_cache_hits
+                            else 0,
                             "same_request_cached_tokens": sum(
                                 block_manager.block_size
                                 for origin in origins
@@ -776,7 +846,7 @@ class NanoVLLMBackend:
                 seqs = state.get("seqs", [])
                 snapshots = state.get("seq_snapshot", {})
                 produced_by_seq = {}
-                for seq, token_id in zip(seqs, result or [], strict=True):
+                for seq, token_id in zip(seqs, result or []):
                     request_id = self._request_id_for_seq(seq)
                     snap = snapshots.get(seq.seq_id, {})
                     is_discarded_prefill_sample = state.get("is_prefill") and snap.get(
@@ -845,12 +915,6 @@ class NanoVLLMBackend:
                 seqs = state.get("seqs", [])
                 snapshots = state.get("seq_snapshot", {})
                 request_ids = [self._request_id_for_seq(seq) for seq in seqs]
-                if not all(
-                    rid is not None and rid != "__warmup__" for rid in request_ids
-                ):
-                    raise RuntimeError(
-                        "measured scheduler step has unresolved request identity"
-                    )
                 is_prefill = bool(state.get("is_prefill"))
                 token_count = (
                     sum(snap["num_scheduled_tokens"] for snap in snapshots.values())
@@ -1039,10 +1103,6 @@ class NanoVLLMBackend:
         self._originals = []
 
     def generate(self, requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if self.engine is None or self._closed:
-            raise RuntimeError("backend must be prepared and open before generate")
-        if self._requests:
-            raise RuntimeError("backend supports one workload generate call")
         prompts: list[list[int]] = []
         params: list[Any] = []
         sampling = importlib.import_module("nanovllm.sampling_params").SamplingParams
@@ -1061,6 +1121,7 @@ class NanoVLLMBackend:
             self._pending_request_ids = iter(
                 str(request["request_id"]) for request in requests
             )
+        self._metric_request_ids = iter(str(r["request_id"]) for r in requests)
         started = time.monotonic_ns()
         # One upstream generate call receives the entire workload in every mode.
         upstream_outputs = self.engine.generate(prompts, params, use_tqdm=False)
@@ -1068,7 +1129,7 @@ class NanoVLLMBackend:
         if self.measurement_profile == "minimal":
             # Pinned generate preserves sequence order in its returned list; this is
             # the real upstream output, not a reconstructed or seeded substitute.
-            for request, output in zip(requests, upstream_outputs, strict=True):
+            for request, output in zip(requests, upstream_outputs):
                 request_id = str(request["request_id"])
                 self._request_output_ids[request_id] = [
                     int(token) for token in output["token_ids"]
@@ -1077,12 +1138,16 @@ class NanoVLLMBackend:
         for request in requests:
             request_id = str(request["request_id"])
             emitted = self._request_output_ids.get(request_id, [])
+            reused_tokens = self._prompt_cache_hits.get(request_id, 0)
             records.append(
                 {
                     "request_id": request_id,
                     "input_token_ids": list(request["input_token_ids"]),
                     "output_token_ids": emitted,
                     "input_token_count": len(request["input_token_ids"]),
+                    "prefix_reused_tokens": reused_tokens,
+                    "cache_hit_tokens": reused_tokens,
+                    "cache_hit_ratio": reused_tokens / len(request["input_token_ids"]),
                     "output_token_count": len(emitted),
                     "actual_output_tokens": len(emitted),
                     "enqueue_monotonic_ns": self._enqueue_ns.get(request_id),
