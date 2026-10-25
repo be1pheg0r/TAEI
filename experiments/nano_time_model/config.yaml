@@ -1,0 +1,31 @@
+# Подбор и проверка модели времени nano-vLLM по готовым прогонам из data/ (только CPU).
+# Флаги: decode=additive|multiplicative|both, fit=regression|optuna.
+# Пример: uv run python experiments/nano_time_model/run.py decode=both fit=regression
+defaults:
+  - base
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://taei.conf
+  run:
+    dir: runs/${now:%Y%m%d_%H%M%S}
+
+experiment:
+  name: nano_time_model
+  description: Fit model A (prefill) and decode methods on Qwen3-0.6B, check on Qwen3-8B R15.
+
+decode: both # additive | multiplicative | both (all methods in taei/nano_time/decode)
+fit: regression # regression (NNLS on relative error) | optuna (mean relative error)
+seed: 42 # train/test split and optuna sampler
+optuna:
+  trials: 1500
+
+train_data:
+  label: Qwen3-0.6B
+  runs_dir: data/qwen-3-06b-768/20261025T092821.424493Z-6636be4c/runs
+  run_ids: null # all successful runs
+transfer_data:
+  label: Qwen3-8B R15
+  runs_dir: data/qwen3-8b-340/20261025T155137.987440Z-a0ffb7eb/runs
+  run_ids: [R15] # the only completed 8B run

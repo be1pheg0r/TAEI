@@ -7,6 +7,9 @@ __pycache__/
 .mypy_cache/
 /.tmp/
 /outputs/
+# Raw nano-vLLM run copies and local time-model runs
+/data/
+/runs/
 
 # Environments and secrets
 .venv/

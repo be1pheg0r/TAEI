@@ -27,6 +27,14 @@ inference = [
     "nano-vllm @ git+https://github.com/GeeeekExplorer/nano-vllm.git@bb823b3e06983d71485a8e1f23715ebd87d98ef8",
     "nvidia-ml-py>=12",
 ]
+# CPU-only fitting and reporting of the nano-vLLM time model (experiments/nano_time_model).
+analysis = [
+    "matplotlib>=3.9",
+    "numpy>=2.0",
+    "optuna>=4.0",
+    "pandas>=2.2",
+    "scipy>=1.14",
+]
 
 [dependency-groups]
 dev = [
