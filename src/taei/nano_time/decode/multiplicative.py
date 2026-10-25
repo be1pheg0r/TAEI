@@ -80,7 +80,7 @@ class Multiplicative:
         overlay_m = runs["wall_seconds"] / runs["prefill_seconds"]
         return [
             {
-                "name": "k by model A (wall / T_prefill_hat)",
+                "name": "k по модели A: wall / предсказанный prefill",
                 "x_label": "p_decode",
                 "y_label": "k",
                 "points": self.points.rename(columns={"p": "x", "k": "y"}).to_dict(
@@ -94,7 +94,7 @@ class Multiplicative:
                 ],
             },
             {
-                "name": "k by measured prefill (diagnostic)",
+                "name": "k по измеренному prefill (диагностика)",
                 "x_label": "p_decode",
                 "y_label": "k",
                 "points": self.points_measured.rename(
@@ -128,6 +128,17 @@ class Multiplicative:
                 "p_min": float(self.points["p"].min()),
                 "p_max": float(self.points["p"].max()),
             },
+            "summary": r"Время prefill по модели A умножается на \(k\), которое "
+            r"зависит только от доли decode-токенов \(p_{\mathrm{decode}}\); \(k\) "
+            r"не подбирается, а интерполируется по train-прогонам.",
+            "latex": [
+                r"k_j = \frac{T^{\mathrm{wall}}_j}{\hat T_{\mathrm{prefill},\,j}}, "
+                r"\qquad j \in \mathrm{train}",
+                r"k(p) = \mathrm{interp}\bigl(p;\ \{(p_j, \operatorname{median} k_j)\}"
+                r"\bigr),\ \text{крайние значения вне диапазона}",
+                r"\hat T_{\mathrm{total}} = \hat T_{\mathrm{prefill}} \cdot "
+                r"k\bigl(p_{\mathrm{decode}}\bigr)",
+            ],
             "k_points": self.points.to_dict(orient="records"),
             "k_points_measured_prefill": self.points_measured.to_dict(orient="records"),
         }

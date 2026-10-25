@@ -16,6 +16,21 @@ import numpy as np
 import pandas as pd
 
 from .evaluate import TRAIN_SOURCE, Evaluation
+from .fit import LATEX as FIT_LATEX
+from .prefill import LATEX as PREFILL_LATEX
+
+# Notation shared by every model in the report (inline TeX).
+NOTATION = [
+    [r"L", "токены запроса после prefill-шага"],
+    [r"C", "токены запроса в кэше до шага"],
+    [r"R = C / L", "доля токенов из кэша"],
+    [r"\ell", "текущая длина контекста запроса в decode-шаге"],
+    [r"B", "число запросов в decode-шаге"],
+    [r"P = \sum L(1 - R)", "новые входные токены прогона"],
+    [r"O", "выходные токены прогона"],
+    [r"p_{\mathrm{decode}} = O / (P + O)", "доля decode в прогоне"],
+    [r"T,\ T^{\mathrm{wall}}", "измеренное время шага; wall_seconds прогона"],
+]
 
 SCHEMA_VERSION = 1
 DECODE_SAMPLE = 4000
@@ -120,9 +135,13 @@ def build(ev: Evaluation, meta: dict, notes: list[str]) -> dict:
                 "name": name,
                 "formula": describe["formula"],
                 "coef": describe["coef"],
+                "summary": describe.get("summary"),
+                "latex": describe.get("latex", []),
                 "has_step_predictions": hasattr(method, "predict_steps"),
                 "details": {
-                    k: v for k, v in describe.items() if k not in ("formula", "coef")
+                    k: v
+                    for k, v in describe.items()
+                    if k not in ("formula", "coef", "summary", "latex")
                 },
             }
         )
@@ -238,10 +257,17 @@ def build(ev: Evaluation, meta: dict, notes: list[str]) -> dict:
             "prefill_model": {
                 "name": "A",
                 "formula": "T_step = a*sum L(1-R) + b*sum L^2(1-R^2) + c",
+                "latex": PREFILL_LATEX,
                 "coef": ev.prefill.coef,
                 "cache_split_coef": ev.prefill_cache_split.coef,
             },
             "methods": methods,
+            "math": {
+                "notation": NOTATION,
+                "error": r"e = \frac{\hat T - T}{T}",
+                "fit": FIT_LATEX.get(meta["meta"].get("fit"), ""),
+                "fit_method": meta["meta"].get("fit"),
+            },
             "metrics": ev.metrics,
             "paired": paired(ev.runs),
             "runs": _records(runs, run_columns),

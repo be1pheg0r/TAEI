@@ -69,6 +69,14 @@ class Additive:
             "formula": "T_total = T_prefill_hat + sum over decode steps of "
             "(d0 + d1*sum_l + d2*B)",
             "coef": self.coef,
+            "summary": r"Время прогона — сумма предсказаний по всем шагам: prefill по "
+            r"модели A, каждый decode-шаг — линейно по \(\sum\ell\) и \(B\).",
+            "latex": [
+                r"\hat T^{\,\mathrm{decode}}_{\mathrm{step}} = d_0 + d_1 \sum_{i \in "
+                r"\mathrm{step}} \ell_i + d_2 B, \qquad d_0, d_1, d_2 \ge 0",
+                r"\hat T_{\mathrm{total}} = \hat T_{\mathrm{prefill}} + \sum_{s \in "
+                r"\mathrm{decode}} \hat T^{\,\mathrm{decode}}_{s}",
+            ],
         }
 
 

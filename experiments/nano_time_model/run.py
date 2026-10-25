@@ -37,9 +37,11 @@ def main(cfg: DictConfig) -> dict:
 def _notes(ev, train, transfers) -> list[str]:
     ratio = train.runs["steps_seconds"] / train.runs["wall_seconds"]
     notes = [
-        f"Сумма измеренных шагов — {ratio.min():.2%}…{ratio.max():.2%} от "
-        "wall_seconds: промежутки между шагами и время до и после цикла моделью "
-        "не описываются и входят в ошибку способов, которые суммируют шаги.",
+        "Сумма измеренных шагов \\(\\sum_s T_s\\) — "
+        f"{ratio.min():.2%}…{ratio.max():.2%} от "
+        "\\(T^{\\mathrm{wall}}\\): промежутки между шагами и время до и после "
+        "цикла моделью не описываются и входят в ошибку способов, которые "
+        "суммируют шаги.",
         "Телеметрия пишется раз в ~1 с, а шаг длится доли секунды: частота шага — "
         "ближайшая выборка, а не среднее по шагу.",
     ]
@@ -48,18 +50,20 @@ def _notes(ev, train, transfers) -> list[str]:
             notes.append(
                 f"У способа {name} train-прогоны сами задают узлы кривой, поэтому его "
                 "ошибка на train занижена по построению; честная оценка — test. "
-                "Прогоны с одинаковым x (например, разные планировщики при одном "
-                "p_decode) кривая не различает."
+                "Прогоны с одинаковым \\(x\\) (например, разные планировщики при "
+                "одном \\(p_{\\mathrm{decode}}\\)) кривая не различает."
             )
     for label, data in transfers.items():
         if (data.prefill_requests["C"] == 0).all():
             notes.append(
-                f"{label}: кэш выключен (R = 0 у всех запросов) — зависимость от R "
+                f"{label}: кэш выключен (\\(R = 0\\) у всех запросов) — зависимость от "
+                "\\(R\\) "
                 "на этой модели проверить нельзя."
             )
         notes.append(
             f"{label}: {len(data.runs)} прогон(ов), {len(data.prefill_steps)} "
-            f"prefill- и {len(data.decode_steps)} decode-шагов; оценка T_total — "
+            f"prefill- и {len(data.decode_steps)} decode-шагов; оценка "
+            "\\(\\hat T_{\\mathrm{total}}\\) — "
             f"{len(data.runs)} точка(и)."
         )
     return notes

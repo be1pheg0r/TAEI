@@ -13,6 +13,12 @@ import numpy as np
 from scipy.optimize import nnls
 
 METHODS = ("regression", "optuna")
+LATEX = {
+    "regression": r"\min_{\theta \ge 0} \sum_j \left( \frac{\hat T_j(\theta) - T_j}"
+    r"{T_j} \right)^2 \quad \text{(NNLS по строкам, делённым на } T_j\text{)}",
+    "optuna": r"\min_{\theta \ge 0} \frac{1}{n} \sum_j \frac{\lvert \hat T_j(\theta)"
+    r" - T_j \rvert}{T_j} \quad \text{(TPE, фиксированный seed)}",
+}
 
 
 def relative_errors(pred, meas) -> np.ndarray:

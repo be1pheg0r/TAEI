@@ -60,6 +60,8 @@ td:first-child, th:first-child, td.text, th.text { text-align: left; }
 td.text { white-space: normal; min-width: 14ch; }
 td.mono, .mono { font-family: var(--font-mono); font-size: 0.8rem; }
 tr:last-child td { border-bottom: 0; }
+.math { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+.math mjx-container[display="true"] { margin: 0.4em 0 !important; }
 .formula { font-family: var(--font-mono); font-size: 0.82rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; overflow-x: auto; }
 ul.notes { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 80ch; }
 a { color: var(--accent); }
@@ -80,6 +82,26 @@ const css = (name) => getComputedStyle(document.documentElement).getPropertyValu
 const PART_LABEL = { train: "train", test: "test", transfer: "transfer" };
 const pct = (v, digits = 1) => (v == null ? "—" : (v * 100).toFixed(digits) + "%");
 const num = (v, digits = 4) => (v == null ? "—" : Number.isInteger(v) ? String(v) : Math.abs(v) >= 1e4 || (Math.abs(v) < 1e-3 && v !== 0) ? v.toExponential(3) : (+v).toPrecision(digits));
+// TeX for numbers and coefficient names: 1.19e-4 -> 1.19 \\times 10^{-4}, d0 -> d_{0}.
+const texNum = (v) => {
+  if (v == null) return "\\text{—}";
+  if (Number.isInteger(v) || v === 0) return String(v);
+  if (Math.abs(v) >= 1e4 || Math.abs(v) < 1e-3) {
+    const [mant, exp] = v.toExponential(2).split("e");
+    return `${mant} \\times 10^{${+exp}}`;
+  }
+  return String(+v.toPrecision(4));
+};
+const texName = (k) => {
+  const digits = k.match(/^([A-Za-z]+)(\d+)$/);
+  if (digits) return `${digits[1]}_{${digits[2]}}`;
+  const [head, ...rest] = k.split("_");
+  return rest.length ? `${head}_{\\mathrm{${rest.join("\\,")}}}` : head;
+};
+const TEX_VAR = { "L": "L", "R": "R", "B": "B", "Σℓ": "\\sum\\ell", "p_decode": "p_{\\mathrm{decode}}" };
+const texVar = (name) => (TEX_VAR[name] ? `\\(${TEX_VAR[name]}\\)` : name);
+// Plotly axis labels take HTML: p_decode -> p<sub>decode</sub>.
+const subLabel = (text) => String(text).replace(/([A-Za-zΣℓ̂]+)_([A-Za-z]+)/g, "$1<sub>$2</sub>");
 const el = (tag, attrs = {}, ...children) => {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -179,7 +201,7 @@ function renderReport() {
     if (row) tiles.append(el("div", { class: "tile" },
       el("span", { class: "label" }, el("span", { class: "swatch", style: `background:${methodColor(m)}` }), m),
       el("span", { class: "value" }, pct(row.mean_abs)),
-      el("span", { class: "sub" }, `средняя |ошибка| T_total, test, ${row.n} прогонов`)));
+      el("span", { class: "sub" }, `средняя \\(|e|\\) для \\(\\hat T_{\\mathrm{total}}\\), test, ${row.n} прогонов`)));
   }
   for (const s of (D.sources || []).filter((x) => x.role === "transfer")) {
     for (const m of methodNames) {
@@ -187,21 +209,44 @@ function renderReport() {
       if (row) tiles.append(el("div", { class: "tile" },
         el("span", { class: "label" }, `${s.label} · ${m}`),
         el("span", { class: "value" }, (row.mean_signed > 0 ? "+" : "") + pct(row.mean_signed)),
-        el("span", { class: "sub" }, `ошибка со знаком, без подгонки`)));
+        el("span", { class: "sub" }, `\\(e\\) со знаком, без подгонки`)));
     }
   }
   app.append(tiles);
   const intro = el("p", { class: "lede" },
     `Подбор на ${train?.label ?? "—"}: ${train?.runs ?? "—"} прогонов, ${train?.prefill_steps ?? "—"} prefill- и ${train?.decode_steps ?? "—"} decode-шагов; ` +
-    `train ${D.split.train.length} / test ${D.split.test.length} прогонов. Ошибка — относительная, (предсказание − замер)/замер.`);
+    `train ${D.split.train.length} / test ${D.split.test.length} прогонов. Ошибка — относительная, \\(e = (\\hat T - T)/T\\).`);
   app.append(intro);
 
-  // 1. Metrics.
-  let s = section("01", "Ошибки и коэффициенты",
-    "Средняя, медиана и максимум — по модулю; «со знаком» — среднее со знаком (минус значит недобор). Строки строятся по всем способам и моделям из данных.");
-  s.append(el("div", { class: "formula" }, `Модель A: ${D.prefill_model.formula}`));
-  for (const m of D.methods) s.append(el("div", { class: "formula" }, `${m.name}: ${m.formula}`));
-  const coefText = (c) => Object.entries(c || {}).map(([k, v]) => `${k}=${typeof v === "number" ? num(v, 4) : v}`).join(", ");
+  // 1. Model description (TeX from the data: notation, model A, methods, fit, error).
+  let s = section("01", "Модели",
+    "Короткое математическое описание: обозначения, модель prefill, способы decode, функция потерь подбора и метрика ошибки.");
+  const math = D.math || {};
+  if ((math.notation || []).length) {
+    table(s, math.notation.map(([tex, text]) => ({ tex, text })), [
+      { label: "обозначение", value: (r) => `\\(${r.tex}\\)`, text: true },
+      { label: "смысл", key: "text", text: true },
+    ]);
+  }
+  const equations = (title, summary, latex, fallback) => {
+    s.append(el("h3", {}, title));
+    if (summary) s.append(el("p", {}, summary));
+    if ((latex || []).length) latex.forEach((eq) => s.append(el("div", { class: "math" }, `\\[${eq}\\]`)));
+    else if (fallback) s.append(el("div", { class: "formula" }, fallback));
+  };
+  equations("Модель A — prefill-шаг", "Время prefill-шага растёт с новыми токенами запросов шага (линейная часть) и с квадратичной частью внимания; токены из кэша не считаются заново.",
+    D.prefill_model.latex, D.prefill_model.formula);
+  for (const m of D.methods) equations(`Decode: ${m.name}`, m.summary, m.latex, m.formula);
+  if (math.fit) equations(`Подбор коэффициентов (fit = ${math.fit_method})`, "Коэффициенты подбираются на train-прогонах; \\(\\theta\\) — коэффициенты модели или способа.", [math.fit]);
+  if (math.error) equations("Ошибка", "Во всех таблицах и графиках — относительная ошибка; минус значит недобор.", [math.error]);
+
+  // 2. Metrics.
+  s = section("02", "Ошибки и коэффициенты",
+    "Средняя, медиана и максимум — по модулю \\(|e|\\); «со знаком» — среднее \\(e\\) (минус значит недобор). Строки строятся по всем способам и моделям из данных.");
+  const coefText = (c) => {
+    const parts = Object.entries(c || {}).map(([k, v]) => `${texName(k)} = ${typeof v === "number" ? texNum(v) : `\\text{${v}}`}`);
+    return parts.length ? `\\(${parts.join(",\\ ")}\\)` : "—";
+  };
   table(s, D.metrics, [
     { label: "что", key: "what", text: true },
     { label: "данные", value: (r) => sourceLabel(r.source), text: true },
@@ -211,13 +256,13 @@ function renderReport() {
     { label: "медиана", key: "median_abs", fmt: (v) => pct(v) },
     { label: "максимум", key: "max_abs", fmt: (v) => pct(v) },
     { label: "со знаком", key: "mean_signed", fmt: (v) => pct(v) },
-    { label: "коэффициенты", value: (r) => coefText(r.coef), text: true, mono: true },
+    { label: "коэффициенты", value: (r) => coefText(r.coef), text: true },
   ]);
 
   // 2. Method comparison on the same test runs.
   const testRuns = D.runs.filter((r) => r.part === "test");
-  s = section("02", "Способы на одних test-прогонах",
-    "Слева — |ошибка| каждого test-прогона по способам; справа — предсказание против wall_seconds, пунктир — y = x.");
+  s = section("03", "Способы на одних test-прогонах",
+    "Слева — \\(|e|\\) каждого test-прогона по способам; справа — \\(\\hat T_{\\mathrm{total}}\\) против \\(T^{\\mathrm{wall}}\\), пунктир — \\(y = x\\).");
   let row = chartRow(s);
   chart(row, () => {
     const ids = [...new Set(testRuns.map((r) => r.run_id))].sort();
@@ -238,7 +283,7 @@ function renderReport() {
         hovertemplate: "%{text}<extra></extra>" };
     });
     traces.push(identityLine(testRuns.map((r) => r.wall_seconds), testRuns.map((r) => r.pred)));
-    return [traces, baseLayout("Предсказание против wall_seconds", "wall_seconds, s", "T̂_total, s")];
+    return [traces, baseLayout("Предсказание против wall", "T<sup>wall</sup>, s", "T̂<sub>total</sub>, s")];
   });
   if ((D.paired || []).length) {
     s.append(el("h3", {}, "Парное сравнение"));
@@ -259,12 +304,12 @@ function renderReport() {
   const flagged = testRuns.filter((r) => r.flag);
   if (flagged.length) {
     s.append(el("p", {}, "Помеченные прогоны:"));
-    table(s, flagged, [{ label: "прогон", key: "run_id", text: true }, { label: "способ", key: "method", text: true }, { label: "p_decode", key: "p_decode", fmt: (v) => num(v, 3) }, { label: "пометка", key: "flag", text: true }]);
+    table(s, flagged, [{ label: "прогон", key: "run_id", text: true }, { label: "способ", key: "method", text: true }, { label: "\\(p_{\\mathrm{decode}}\\)", key: "p_decode", fmt: (v) => num(v, 3) }, { label: "пометка", key: "flag", text: true }]);
   }
 
   // 3. Curves from methods that provide them.
   if ((D.curves || []).length) {
-    s = section("03", "Кривые способов", "Точки — train-прогоны (одинаковые x объединены медианой), линия — интерполяция, кресты — test-прогоны поверх кривой.");
+    s = section("04", "Кривые способов", "Точки — train-прогоны (одинаковые \\(x\\) объединены медианой), линия — интерполяция, кресты — test-прогоны поверх кривой.");
     row = chartRow(s);
     D.curves.forEach((c) => chart(row, () => {
       const color = methodColor(c.method);
@@ -274,13 +319,13 @@ function renderReport() {
         { type: "scatter", mode: "markers", name: "test-прогоны", x: c.overlay.map((p) => p.x), y: c.overlay.map((p) => p.y),
           marker: { color: partColor("test"), size: 10, symbol: "x-thin", line: { width: 2, color: partColor("test") } },
           text: c.overlay.map((p) => p.run_id), hovertemplate: `%{text}<br>${c.x_label} %{x:.4f}<br>${c.y_label} %{y:.3g}<extra>test</extra>` },
-      ], baseLayout(`${c.method}: ${c.name}`, c.x_label, c.y_label)];
+      ], baseLayout(`${c.method}: ${subLabel(c.name)}`, subLabel(c.x_label), subLabel(c.y_label))];
     }));
   }
 
   // 4. Prefill (model A) on the train model.
   const pf = D.prefill_steps.filter((r) => r.source === train?.id);
-  s = section("04", "Prefill: модель A", "По шагам: предсказание против замера и ошибка в зависимости от средней L шага и R шага (ΣC/ΣL).");
+  s = section("05", "Prefill: модель A", "По шагам: \\(\\hat T\\) против \\(T\\) и ошибка в зависимости от средней \\(\\bar L\\) шага и \\(R_{\\mathrm{step}} = \\sum C / \\sum L\\).");
   row = chartRow(s);
   const pfHover = (r) => `${r.run_id} ${r.step_id}<br>T ${r.T.toFixed(3)} s, T̂ ${r.pred.toFixed(3)} s<br>L̄ ${r.L_mean?.toFixed(0)}, R ${r.R_step?.toFixed(2)}<br>ошибка ${pct(r.rel_err)}`;
   chart(row, () => { const t = scatterByPart(pf, "T", "pred", "part", pfHover); t.push(identityLine(pf.map((r) => r.T), pf.map((r) => r.pred))); return [t, baseLayout("Prefill-шаг", "замер, s", "предсказание, s")]; });
@@ -291,8 +336,8 @@ function renderReport() {
   const stepMethods = D.methods.filter((m) => m.has_step_predictions);
   const dc = D.decode_sample.filter((r) => r.source === train?.id);
   stepMethods.forEach((m, i) => {
-    s = section("05" + (stepMethods.length > 1 ? String.fromCharCode(97 + i) : ""), `Decode-шаги: ${m.name}`,
-      `Слева — случайная выборка до 4000 шагов; в центре и справа — медиана и межквартильный размах ошибки по всем шагам.`);
+    s = section("06" + (stepMethods.length > 1 ? String.fromCharCode(97 + i) : ""), `Decode-шаги: ${m.name}`,
+      `Слева — случайная выборка до 4000 шагов; в центре и справа — медиана и межквартильный размах \\(e\\) по всем шагам в зависимости от \\(\\sum\\ell\\) и \\(B\\).`);
     row = chartRow(s);
     const pk = "pred__" + m.name, ek = "rel_err__" + m.name;
     const hover = (r) => `${r.run_id}<br>T ${(r.T * 1e3).toFixed(1)} ms, T̂ ${(r[pk] * 1e3).toFixed(1)} ms<br>B ${r.B}, Σℓ ${r.sum_l}<br>ошибка ${pct(r[ek])}`;
@@ -305,7 +350,7 @@ function renderReport() {
   });
 
   // 6. Error against SM clock.
-  s = section("06", "Ошибка от частоты SM", "Частота шага — среднее по GPU прогона в ближайшей выборке телеметрии (раз в ~1 с). Модели частоту не используют.");
+  s = section("07", "Ошибка от частоты SM", "Частота шага — среднее по GPU прогона в ближайшей выборке телеметрии (раз в ~1 с). Модели частоту не используют.");
   row = chartRow(s);
   chart(row, () => [scatterByPart(pf, "sm_clock_mhz", "rel_err", "part", pfHover), baseLayout("Prefill-шаги", "частота SM, МГц", "ошибка", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка" } } })]);
   stepMethods.forEach((m) => chart(row, () => [binnedTraces(((D.decode_binned[m.name] || {}).sm_clock_mhz || []).filter((b) => b.source === train?.id), (p) => partColor(p), (p) => PART_LABEL[p] ?? p),
@@ -320,13 +365,13 @@ function renderReport() {
   // 7. Transfer sources.
   const transfers = (D.sources || []).filter((x) => x.role === "transfer");
   transfers.forEach((src, i) => {
-    s = section("07" + (transfers.length > 1 ? String.fromCharCode(97 + i) : ""), `Перенос: ${src.label}`,
+    s = section("08" + (transfers.length > 1 ? String.fromCharCode(97 + i) : ""), `Перенос: ${src.label}`,
       `Коэффициенты и кривые — от ${train?.label}, без подгонки. ${src.runs} прогон(ов), ${src.prefill_steps} prefill- и ${src.decode_steps} decode-шагов.`);
     table(s, D.runs.filter((r) => r.source === src.id), [
       { label: "прогон", key: "run_id", text: true }, { label: "способ", key: "method", text: true },
-      { label: "wall, s", key: "wall_seconds", fmt: (v) => num(v, 4) }, { label: "T̂, s", key: "pred", fmt: (v) => num(v, 4) },
-      { label: "ошибка", key: "rel_err", fmt: (v) => pct(v) }, { label: "prefill замер, s", key: "prefill_seconds", fmt: (v) => num(v, 3) },
-      { label: "T̂ prefill, s", key: "prefill_hat", fmt: (v) => num(v, 3) }, { label: "p_decode", key: "p_decode", fmt: (v) => num(v, 3) },
+      { label: "\\(T^{\\mathrm{wall}}\\), s", key: "wall_seconds", fmt: (v) => num(v, 4) }, { label: "\\(\\hat T_{\\mathrm{total}}\\), s", key: "pred", fmt: (v) => num(v, 4) },
+      { label: "\\(e\\)", key: "rel_err", fmt: (v) => pct(v) }, { label: "\\(T_{\\mathrm{prefill}}\\), s", key: "prefill_seconds", fmt: (v) => num(v, 3) },
+      { label: "\\(\\hat T_{\\mathrm{prefill}}\\), s", key: "prefill_hat", fmt: (v) => num(v, 3) }, { label: "\\(p_{\\mathrm{decode}}\\)", key: "p_decode", fmt: (v) => num(v, 3) },
       { label: "пометка", key: "flag", text: true },
     ]);
     row = chartRow(s);
@@ -342,9 +387,9 @@ function renderReport() {
   });
 
   // 8. Coverage.
-  s = section("08", "Покрытие данных", "Диапазоны признаков по каждой модели; гистограммы нормированы, чтобы сравнивать формы распределений.");
+  s = section("09", "Покрытие данных", "Диапазоны признаков по каждой модели; гистограммы нормированы, чтобы сравнивать формы распределений.");
   table(s, D.coverage, [
-    { label: "данные", value: (r) => sourceLabel(r.source), text: true }, { label: "признак", key: "variable", text: true },
+    { label: "данные", value: (r) => sourceLabel(r.source), text: true }, { label: "признак", value: (r) => texVar(r.variable), text: true },
     { label: "min", key: "min", fmt: (v) => num(v, 4) }, { label: "p05", key: "p05", fmt: (v) => num(v, 4) },
     { label: "медиана", key: "median", fmt: (v) => num(v, 4) }, { label: "p95", key: "p95", fmt: (v) => num(v, 4) },
     { label: "max", key: "max", fmt: (v) => num(v, 4) }, { label: "n", key: "n" },
@@ -355,10 +400,10 @@ function renderReport() {
     type: "histogram", name: src.label, x: (D.coverage_values[src.id] || {})[v] || [], histnorm: "probability", bingroup: 1,
     opacity: 0.6, marker: { color: src.role === "train" ? partColor("train") : partColor("transfer"), line: { width: 1, color: css("--bg") } },
     hovertemplate: `${v} %{x}<br>доля %{y:.1%}<extra>${src.label}</extra>`,
-  })), baseLayout(v, v, "доля", { barmode: "overlay", yaxis: { ...baseLayout().yaxis, tickformat: ".0%", title: { text: "доля" } } })]));
+  })), baseLayout(subLabel(v), subLabel(v), "доля", { barmode: "overlay", yaxis: { ...baseLayout().yaxis, tickformat: ".0%", title: { text: "доля" } } })]));
 
   // 9. Notes.
-  s = section("09", "Что посчитать нельзя или с оговорками");
+  s = section("10", "Что посчитать нельзя или с оговорками");
   s.append(el("ul", { class: "notes" }, ...(D.notes || []).map((n) => el("li", {}, n))));
 }
 
@@ -396,3 +441,11 @@ const redraw = () => window.Plotly && drawCharts();
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redraw);
 new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 </script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [["\\(", "\\)"]], displayMath: [["\\[", "\\]"]] },
+  svg: { fontCache: "global" },
+  options: { ignoreHtmlClass: "chart|charts" },
+};
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg.js"></script>
