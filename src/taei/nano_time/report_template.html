@@ -9,6 +9,7 @@
   --grid: #e9e7e1; --accent: #2a5f9e;
   --part-train: #2a78d6; --part-test: #eb6834; --part-transfer: #1baf7a;
   --m1: #6250d6; --m2: #008300; --m3: #e87ba4; --m4: #e34948;
+  --div-neg: #2a78d6; --div-mid: #f0efec; --div-pos: #e34948;
   --good: #1f7a3a; --bad: #b3261e;
   --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
@@ -19,6 +20,7 @@
     --grid: #2b2a27; --accent: #7fb0ec;
     --part-train: #3987e5; --part-test: #d95926; --part-transfer: #199e70;
     --m1: #9085e9; --m2: #008300; --m3: #d55181; --m4: #e66767;
+    --div-neg: #3987e5; --div-mid: #383835; --div-pos: #e66767;
     --good: #5cbf7a; --bad: #f08a80; color-scheme: dark;
   }
 }
@@ -27,6 +29,7 @@
   --grid: #2b2a27; --accent: #7fb0ec;
   --part-train: #3987e5; --part-test: #d95926; --part-transfer: #199e70;
   --m1: #9085e9; --m2: #008300; --m3: #d55181; --m4: #e66767;
+    --div-neg: #3987e5; --div-mid: #383835; --div-pos: #e66767;
   --good: #5cbf7a; --bad: #f08a80; color-scheme: dark;
 }
 body {
@@ -286,6 +289,18 @@ function renderReport() {
     return [traces, baseLayout("Предсказание против wall", "T<sup>wall</sup>, s", "T̂<sub>total</sub>, s")];
   });
   if ((D.paired || []).length) {
+    s.append(el("h3", {}, "Ошибка \\(\\hat T_{\\mathrm{total}}\\) от \\(\\bar L\\) и \\(R\\) прогона"));
+    s.append(el("p", { class: "lede" }, "Test-прогоны: \\(\\bar L\\) — средняя длина запроса прогона, \\(R = \\sum C / \\sum L\\) по его запросам (у прогонов без кэша \\(R = 0\\))."));
+    const lrRow = chartRow(s);
+    const runScatter = (x, title, xTitle) => chart(lrRow, () => [methodNames.map((m) => {
+      const sub = testRuns.filter((r) => r.method === m);
+      return { type: "scatter", mode: "markers", name: m, x: sub.map((r) => r[x]), y: sub.map((r) => r.rel_err),
+        marker: { color: methodColor(m), size: 9, line: { width: 1, color: css("--bg") } },
+        text: sub.map((r) => `${r.run_id} · ${m}<br>L̄ ${r.L_mean?.toFixed(0)}, R ${r.R_run?.toFixed(2)}<br>${r.scheduler}, кэш ${r.cache}<br>ошибка ${pct(r.rel_err)}`),
+        hovertemplate: "%{text}<extra></extra>" };
+    }), baseLayout(title, xTitle, "ошибка", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка" } } })]);
+    runScatter("L_mean", "Ошибка T̂<sub>total</sub> от L̄", "средняя L прогона, токены");
+    runScatter("R_run", "Ошибка T̂<sub>total</sub> от R", "R прогона");
     s.append(el("h3", {}, "Парное сравнение"));
     table(s, D.paired, [
       { label: "способ A", key: "a", text: true }, { label: "способ B", key: "b", text: true },
@@ -331,6 +346,25 @@ function renderReport() {
   chart(row, () => { const t = scatterByPart(pf, "T", "pred", "part", pfHover); t.push(identityLine(pf.map((r) => r.T), pf.map((r) => r.pred))); return [t, baseLayout("Prefill-шаг", "замер, s", "предсказание, s")]; });
   chart(row, () => [scatterByPart(pf, "L_mean", "rel_err", "part", pfHover), baseLayout("Ошибка от L", "средняя L шага, токены", "ошибка", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка" } } })]);
   chart(row, () => [scatterByPart(pf, "R_step", "rel_err", "part", pfHover), baseLayout("Ошибка от R", "R шага", "ошибка", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка" } } })]);
+  s.append(el("h3", {}, "Зависимость ошибки от \\(\\bar L\\) и \\(R\\)"));
+  s.append(el("p", { class: "lede" }, "Медиана и межквартильный размах \\(e\\) prefill-шага по квантильным корзинам; справа — медиана \\(e\\) на сетке \\(\\bar L \\times R_{\\mathrm{step}}\\) (синий — недобор, красный — перебор, в ячейке — число шагов)."));
+  row = chartRow(s);
+  const pbins = D.prefill_binned || {};
+  const pErrLayout = (t, x) => baseLayout(t, x, "ошибка (медиана)", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка (медиана)" } } });
+  chart(row, () => [binnedTraces((pbins.L_mean || []).filter((b) => b.source === train?.id), (p) => partColor(p), (p) => PART_LABEL[p] ?? p), pErrLayout("Ошибка от L̄", "средняя L шага, токены")]);
+  chart(row, () => [binnedTraces((pbins.R_step || []).filter((b) => b.source === train?.id), (p) => partColor(p), (p) => PART_LABEL[p] ?? p), pErrLayout("Ошибка от R", "R шага")]);
+  const g = D.prefill_grid || {};
+  if ((g.median || []).length) chart(row, () => {
+    const vals = g.median.flat().filter((v) => v != null);
+    const lim = Math.max(0.05, ...vals.map(Math.abs));
+    return [[{
+      type: "heatmap", x: g.x.map((v) => Math.round(v)), y: g.y.map((v) => +v.toFixed(2)), z: g.median, zmin: -lim, zmax: lim,
+      colorscale: [[0, css("--div-neg")], [0.5, css("--div-mid")], [1, css("--div-pos")]], xgap: 2, ygap: 2,
+      text: g.count.map((r) => r.map((n) => (n ? String(n) : ""))), texttemplate: "%{text}", textfont: { color: css("--fg"), size: 11 },
+      colorbar: { tickformat: ".0%", outlinewidth: 0, tickfont: { color: css("--muted") } },
+      hovertemplate: "L̄ ≈ %{x}<br>R ≈ %{y}<br>медиана e %{z:.1%}<br>шагов %{text}<extra></extra>",
+    }], baseLayout("Медиана e: L̄ × R", "средняя L шага (центр корзины)", "R шага (центр корзины)", { xaxis: { ...baseLayout().xaxis, type: "category", title: { text: "средняя L шага (центр корзины)" } }, yaxis: { ...baseLayout().yaxis, type: "category", title: { text: "R шага (центр корзины)" } } })];
+  });
 
   // 5. Decode steps for methods with step predictions.
   const stepMethods = D.methods.filter((m) => m.has_step_predictions);

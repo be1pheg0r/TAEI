@@ -88,6 +88,38 @@ def binned(frame: pd.DataFrame, x: str, y: str, bins: int = 12) -> list[dict]:
     return out
 
 
+def grid(frame: pd.DataFrame, x: str, y: str, z: str, nx: int = 6, ny: int = 5) -> dict:
+    """Median z on a quantile grid of x and y (empty cells are null)."""
+    sub = frame[[x, y, z]].dropna()
+    if sub.empty:
+        return {}
+
+    def edges(values, n):
+        e = np.unique(np.quantile(values, np.linspace(0, 1, n + 1)))
+        return e if len(e) > 1 else np.array([values.min(), values.max() + 1e-9])
+
+    ex, ey = edges(sub[x].to_numpy(float), nx), edges(sub[y].to_numpy(float), ny)
+    ix = np.clip(np.digitize(sub[x], ex[1:-1]), 0, len(ex) - 2)
+    iy = np.clip(np.digitize(sub[y], ey[1:-1]), 0, len(ey) - 2)
+    median = np.full((len(ey) - 1, len(ex) - 1), np.nan)
+    count = np.zeros_like(median, dtype=int)
+    for j in range(len(ey) - 1):
+        for i in range(len(ex) - 1):
+            cell = sub[z].to_numpy()[(ix == i) & (iy == j)]
+            count[j, i] = len(cell)
+            if len(cell):
+                median[j, i] = np.median(cell)
+    centers = lambda e: ((e[:-1] + e[1:]) / 2).tolist()  # noqa: E731
+    return {
+        "x": centers(ex),
+        "y": centers(ey),
+        "x_edges": ex.tolist(),
+        "y_edges": ey.tolist(),
+        "median": median.tolist(),
+        "count": count.tolist(),
+    }
+
+
 def paired(runs: pd.DataFrame) -> list[dict]:
     """Every pair of methods: |error| on the same test runs, Wilcoxon test."""
     from scipy import stats
@@ -158,6 +190,11 @@ def build(ev: Evaluation, meta: dict, notes: list[str]) -> dict:
     )
     step_lr["R_step"] = step_lr["C_sum"] / step_lr["L_sum"]
     pf = ev.prefill_steps.merge(step_lr, on=["source", "run_id", "step_id"], how="left")
+    prefill_binned = {
+        "L_mean": binned(pf, "L_mean", "rel_err", bins=8),
+        "R_step": binned(pf, "R_step", "rel_err", bins=6),
+    }
+    prefill_grid = grid(pf[pf["source"] == TRAIN_SOURCE], "L_mean", "R_step", "rel_err")
 
     # Decode: a plotting sample per source, binned statistics on all steps.
     dc = ev.decode_steps
@@ -245,6 +282,8 @@ def build(ev: Evaluation, meta: dict, notes: list[str]) -> dict:
         "P",
         "O",
         "sm_clock_mhz_median",
+        "L_mean",
+        "R_run",
         "flag",
     ] + [c for c in runs.columns if c.startswith("diag__")]
     return clean(
@@ -292,6 +331,8 @@ def build(ev: Evaluation, meta: dict, notes: list[str]) -> dict:
             ),
             "decode_sample": _records(sample, step_columns),
             "decode_binned": decode_binned,
+            "prefill_binned": prefill_binned,
+            "prefill_grid": prefill_grid,
             "coverage": coverage,
             "coverage_values": coverage_values,
             "notes": notes,

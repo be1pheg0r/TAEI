@@ -136,6 +136,9 @@ def load_run(attempt: Path, model: str) -> dict[str, pd.DataFrame | dict]:
         "decode_seconds": float(decode["T"].sum()),
         "n_prefill_steps": len(prefill),
         "n_decode_steps": len(decode),
+        # Run-level L and R over its prefilled requests (R = sum C / sum L).
+        "L_mean": float(reqs["L"].mean()),
+        "R_run": float(reqs["C"].sum() / reqs["L"].sum()),
         "sm_clock_mhz_median": float(np.median(tel["sm_clock_mhz"]))
         if len(tel)
         else np.nan,
