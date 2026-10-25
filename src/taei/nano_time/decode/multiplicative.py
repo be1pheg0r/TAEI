@@ -63,12 +63,51 @@ class Multiplicative:
         t_prefill = self.prefill.predict_runs(pf).reindex(runs.index)
         return t_prefill * self.k(runs["p_decode"])
 
-    def predict_total_measured_prefill(self, data: Dataset, run_ids) -> pd.Series:
-        """Diagnostic: measured prefill time times k from measured prefill."""
+    def diagnostics(self, data: Dataset, run_ids) -> dict[str, pd.Series]:
+        """Measured prefill time times k built from measured prefill."""
         runs = data.runs.set_index("run_id").loc[sorted(run_ids)]
-        return runs["prefill_seconds"] * interpolate(
+        pred = runs["prefill_seconds"] * interpolate(
             self.points_measured, runs["p_decode"]
         )
+        return {"measured prefill x k_meas": pred}
+
+    def curves(self, data: Dataset, run_ids) -> list[dict]:
+        """k(p) curves with train points and the given runs overlaid."""
+        runs = data.runs.set_index("run_id").loc[sorted(run_ids)]
+        pf = data.prefill_steps[data.prefill_steps["run_id"].isin(run_ids)]
+        t_hat = self.prefill.predict_runs(pf).reindex(runs.index)
+        overlay_a = runs["wall_seconds"] / t_hat
+        overlay_m = runs["wall_seconds"] / runs["prefill_seconds"]
+        return [
+            {
+                "name": "k by model A (wall / T_prefill_hat)",
+                "x_label": "p_decode",
+                "y_label": "k",
+                "points": self.points.rename(columns={"p": "x", "k": "y"}).to_dict(
+                    orient="records"
+                ),
+                "overlay": [
+                    {"x": float(p), "y": float(k), "run_id": r}
+                    for r, p, k in zip(
+                        runs.index, runs["p_decode"], overlay_a, strict=True
+                    )
+                ],
+            },
+            {
+                "name": "k by measured prefill (diagnostic)",
+                "x_label": "p_decode",
+                "y_label": "k",
+                "points": self.points_measured.rename(
+                    columns={"p": "x", "k": "y"}
+                ).to_dict(orient="records"),
+                "overlay": [
+                    {"x": float(p), "y": float(k), "run_id": r}
+                    for r, p, k in zip(
+                        runs.index, runs["p_decode"], overlay_m, strict=True
+                    )
+                ],
+            },
+        ]
 
     def flags(self, data: Dataset, run_ids) -> pd.Series:
         runs = data.runs.set_index("run_id").loc[sorted(run_ids)]
@@ -82,10 +121,15 @@ class Multiplicative:
 
     def describe(self) -> dict:
         return {
+            "formula": "T_total = T_prefill_hat * k(p_decode), "
+            "k linear interpolation between train points",
+            "coef": {
+                "k_points": len(self.points),
+                "p_min": float(self.points["p"].min()),
+                "p_max": float(self.points["p"].max()),
+            },
             "k_points": self.points.to_dict(orient="records"),
             "k_points_measured_prefill": self.points_measured.to_dict(orient="records"),
-            "p_range": [float(self.points["p"].min()), float(self.points["p"].max())],
-            "formula": "T_total = T_prefill_hat * k(p_decode), k linear interpolation",
         }
 
 

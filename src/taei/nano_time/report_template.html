@@ -1,0 +1,398 @@
+<title>__TITLE__</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column of numbered report sections; charts full column width. */
+:root {
+  --bg: #fcfcfb; --surface: #f4f4f1; --fg: #1d1d1b; --muted: #5f5e58; --line: #dedcd5;
+  --grid: #e9e7e1; --accent: #2a5f9e;
+  --part-train: #2a78d6; --part-test: #eb6834; --part-transfer: #1baf7a;
+  --m1: #6250d6; --m2: #008300; --m3: #e87ba4; --m4: #e34948;
+  --good: #1f7a3a; --bad: #b3261e;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161615; --surface: #1f1f1d; --fg: #ecebe6; --muted: #a9a79e; --line: #3a3935;
+    --grid: #2b2a27; --accent: #7fb0ec;
+    --part-train: #3987e5; --part-test: #d95926; --part-transfer: #199e70;
+    --m1: #9085e9; --m2: #008300; --m3: #d55181; --m4: #e66767;
+    --good: #5cbf7a; --bad: #f08a80; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161615; --surface: #1f1f1d; --fg: #ecebe6; --muted: #a9a79e; --line: #3a3935;
+  --grid: #2b2a27; --accent: #7fb0ec;
+  --part-train: #3987e5; --part-test: #d95926; --part-transfer: #199e70;
+  --m1: #9085e9; --m2: #008300; --m3: #d55181; --m4: #e66767;
+  --good: #5cbf7a; --bad: #f08a80; color-scheme: dark;
+}
+body {
+  background: var(--bg); color: var(--fg); font: 15px/1.55 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 64px;
+}
+main { max-width: 1180px; margin: 0 auto; display: grid; gap: 40px; }
+h1 { font-size: 1.9rem; font-weight: 600; margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+h2 { font-size: 1.25rem; font-weight: 600; margin: 0; text-wrap: balance; display: flex; gap: 10px; align-items: baseline; }
+h2 .num { font-family: var(--font-mono); font-size: 0.85rem; color: var(--muted); }
+h3 { font-size: 1rem; font-weight: 600; margin: 8px 0 0; }
+p { margin: 0; max-width: 72ch; }
+.meta { font-family: var(--font-mono); font-size: 0.8rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 18px; }
+section { display: grid; gap: 14px; min-width: 0; }
+.lede { color: var(--muted); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; display: grid; gap: 2px; }
+.tile .label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.tile .value { font-family: var(--font-mono); font-size: 1.5rem; font-variant-numeric: tabular-nums; }
+.tile .sub { font-size: 0.8rem; color: var(--muted); }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: baseline; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+.chart { min-width: 0; height: 360px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+th, td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+th { background: var(--surface); font-weight: 600; position: sticky; top: 0; }
+td:first-child, th:first-child, td.text, th.text { text-align: left; }
+td.text { white-space: normal; min-width: 14ch; }
+td.mono, .mono { font-family: var(--font-mono); font-size: 0.8rem; }
+tr:last-child td { border-bottom: 0; }
+.formula { font-family: var(--font-mono); font-size: 0.82rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; overflow-x: auto; }
+ul.notes { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 80ch; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.neg { color: var(--bad); } .pos { color: var(--good); }
+@media (max-width: 520px) { .chart { height: 300px; } h1 { font-size: 1.5rem; } }
+</style>
+
+<main id="app"></main>
+
+<script id="report-data" type="application/json">__REPORT_DATA__</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.0/plotly.min.js"></script>
+<script>
+"use strict";
+const D = JSON.parse(document.getElementById("report-data").textContent);
+const app = document.getElementById("app");
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const PART_LABEL = { train: "train", test: "test", transfer: "transfer" };
+const pct = (v, digits = 1) => (v == null ? "—" : (v * 100).toFixed(digits) + "%");
+const num = (v, digits = 4) => (v == null ? "—" : Number.isInteger(v) ? String(v) : Math.abs(v) >= 1e4 || (Math.abs(v) < 1e-3 && v !== 0) ? v.toExponential(3) : (+v).toPrecision(digits));
+const el = (tag, attrs = {}, ...children) => {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") node.className = v; else if (k === "html") node.innerHTML = v; else node.setAttribute(k, v);
+  }
+  for (const c of children) if (c != null) node.append(c);
+  return node;
+};
+const sourceLabel = (id) => (D.sources || []).find((s) => s.id === id)?.label ?? id;
+const methodNames = (D.methods || []).map((m) => m.name);
+const methodColor = (name) => css(["--m1", "--m2", "--m3", "--m4"][Math.max(0, methodNames.indexOf(name)) % 4]);
+const partColor = (part) => css("--part-" + part) || css("--muted");
+
+function section(num, title, lede) {
+  const s = el("section", {}, el("h2", {}, el("span", { class: "num" }, num), title));
+  if (lede) s.append(el("p", { class: "lede" }, lede));
+  app.append(s);
+  return s;
+}
+function table(parent, rows, columns) {
+  const head = el("tr", {}, ...columns.map((c) => el("th", { class: c.text ? "text" : "" }, c.label)));
+  const body = rows.map((r) => el("tr", {}, ...columns.map((c) => {
+    const v = c.value ? c.value(r) : r[c.key];
+    const cell = el("td", { class: [c.text ? "text" : "", c.mono ? "mono" : ""].join(" ") });
+    if (v instanceof Node) cell.append(v); else cell.textContent = c.fmt ? c.fmt(v, r) : (v ?? "—");
+    return cell;
+  })));
+  parent.append(el("div", { class: "table-wrap" }, el("table", {}, el("thead", {}, head), el("tbody", {}, ...body))));
+}
+const charts = [];
+function chart(parent, build) {
+  const box = el("div", { class: "chart" });
+  parent.append(box);
+  charts.push({ box, build });
+  return box;
+}
+function chartRow(parent) { const row = el("div", { class: "charts" }); parent.append(row); return row; }
+function baseLayout(title, xTitle, yTitle, extra = {}) {
+  const fg = css("--fg"), muted = css("--muted"), grid = css("--grid");
+  const axis = (t) => ({ title: { text: t, font: { size: 12, color: muted } }, gridcolor: grid, zerolinecolor: muted, linecolor: grid, tickfont: { color: muted, size: 11 }, automargin: true });
+  return Object.assign({
+    title: { text: title, font: { size: 14, color: fg }, x: 0.02, xanchor: "left" },
+    paper_bgcolor: css("--bg"), plot_bgcolor: css("--bg"),
+    font: { family: css("--font-body"), color: fg },
+    margin: { l: 56, r: 16, t: 44, b: 48 },
+    legend: { orientation: "h", y: -0.22, font: { size: 11, color: fg } },
+    hoverlabel: { bgcolor: css("--surface"), bordercolor: css("--line"), font: { color: fg, family: css("--font-mono"), size: 12 } },
+    xaxis: axis(xTitle), yaxis: axis(yTitle),
+  }, extra);
+}
+function identityLine(xs, ys) {
+  const all = xs.concat(ys).filter((v) => v != null);
+  const lo = Math.min(...all), hi = Math.max(...all);
+  return { x: [lo, hi], y: [lo, hi], mode: "lines", name: "y = x", line: { color: css("--muted"), dash: "dash", width: 1 }, hoverinfo: "skip" };
+}
+function scatterByPart(rows, x, y, partKey, hover) {
+  const parts = [...new Set(rows.map((r) => r[partKey]))];
+  return parts.map((p) => {
+    const sub = rows.filter((r) => r[partKey] === p);
+    return { x: sub.map((r) => r[x]), y: sub.map((r) => r[y]), mode: "markers", type: "scatter", name: PART_LABEL[p] ?? p,
+      marker: { color: partColor(p), size: 8, opacity: 0.75, line: { width: 1, color: css("--bg") } },
+      text: sub.map(hover), hovertemplate: "%{text}<extra></extra>" };
+  });
+}
+function binnedTraces(bins, colorOf, nameOf) {
+  const groups = {};
+  for (const b of bins) (groups[b.source + "|" + b.part] ||= []).push(b);
+  const traces = [];
+  for (const [key, list] of Object.entries(groups)) {
+    const [source, part] = key.split("|");
+    list.sort((a, b) => a.x - b.x);
+    const color = colorOf(part, source);
+    traces.push({ x: list.map((b) => b.x).concat(list.map((b) => b.x).reverse()), y: list.map((b) => b.q75).concat(list.map((b) => b.q25).reverse()),
+      fill: "toself", fillcolor: color, opacity: 0.15, line: { width: 0 }, hoverinfo: "skip", showlegend: false, type: "scatter" });
+    traces.push({ x: list.map((b) => b.x), y: list.map((b) => b.median), mode: "lines+markers", type: "scatter", name: nameOf(part, source),
+      line: { color, width: 2 }, marker: { color, size: 8 },
+      customdata: list.map((b) => [b.q25, b.q75, b.n]),
+      hovertemplate: "x %{x:.4g}<br>median %{y:.1%}<br>IQR %{customdata[0]:.1%} … %{customdata[1]:.1%}<br>n %{customdata[2]}<extra></extra>" });
+  }
+  return traces;
+}
+const errAxis = { tickformat: ".0%" };
+
+function renderReport() {
+  const meta = D.meta || {};
+  const train = (D.sources || []).find((s) => s.role === "train");
+  app.append(el("header", {}, el("h1", {}, "Модель времени nano-vLLM"),
+    el("div", { class: "meta" }, ...[
+      `создан ${meta.created_utc ?? "—"}`, `коммит ${(meta.git_commit || "").slice(0, 7)}`, `fit=${meta.fit}`,
+      `decode=${meta.decode}`, `seed=${meta.seed}`, `формат v${D.schema_version}`,
+    ].map((t) => el("span", {}, t)))));
+
+  // Headline tiles: test error per method, transfer error per method and source.
+  const tiles = el("div", { class: "tiles" });
+  for (const m of methodNames) {
+    const row = D.metrics.find((r) => r.what === `${m}: T_total per run` && r.part === "test");
+    if (row) tiles.append(el("div", { class: "tile" },
+      el("span", { class: "label" }, el("span", { class: "swatch", style: `background:${methodColor(m)}` }), m),
+      el("span", { class: "value" }, pct(row.mean_abs)),
+      el("span", { class: "sub" }, `средняя |ошибка| T_total, test, ${row.n} прогонов`)));
+  }
+  for (const s of (D.sources || []).filter((x) => x.role === "transfer")) {
+    for (const m of methodNames) {
+      const row = D.metrics.find((r) => r.what === `${m}: T_total per run` && r.source === s.id);
+      if (row) tiles.append(el("div", { class: "tile" },
+        el("span", { class: "label" }, `${s.label} · ${m}`),
+        el("span", { class: "value" }, (row.mean_signed > 0 ? "+" : "") + pct(row.mean_signed)),
+        el("span", { class: "sub" }, `ошибка со знаком, без подгонки`)));
+    }
+  }
+  app.append(tiles);
+  const intro = el("p", { class: "lede" },
+    `Подбор на ${train?.label ?? "—"}: ${train?.runs ?? "—"} прогонов, ${train?.prefill_steps ?? "—"} prefill- и ${train?.decode_steps ?? "—"} decode-шагов; ` +
+    `train ${D.split.train.length} / test ${D.split.test.length} прогонов. Ошибка — относительная, (предсказание − замер)/замер.`);
+  app.append(intro);
+
+  // 1. Metrics.
+  let s = section("01", "Ошибки и коэффициенты",
+    "Средняя, медиана и максимум — по модулю; «со знаком» — среднее со знаком (минус значит недобор). Строки строятся по всем способам и моделям из данных.");
+  s.append(el("div", { class: "formula" }, `Модель A: ${D.prefill_model.formula}`));
+  for (const m of D.methods) s.append(el("div", { class: "formula" }, `${m.name}: ${m.formula}`));
+  const coefText = (c) => Object.entries(c || {}).map(([k, v]) => `${k}=${typeof v === "number" ? num(v, 4) : v}`).join(", ");
+  table(s, D.metrics, [
+    { label: "что", key: "what", text: true },
+    { label: "данные", value: (r) => sourceLabel(r.source), text: true },
+    { label: "часть", key: "part" },
+    { label: "n", key: "n" },
+    { label: "средняя", key: "mean_abs", fmt: (v) => pct(v) },
+    { label: "медиана", key: "median_abs", fmt: (v) => pct(v) },
+    { label: "максимум", key: "max_abs", fmt: (v) => pct(v) },
+    { label: "со знаком", key: "mean_signed", fmt: (v) => pct(v) },
+    { label: "коэффициенты", value: (r) => coefText(r.coef), text: true, mono: true },
+  ]);
+
+  // 2. Method comparison on the same test runs.
+  const testRuns = D.runs.filter((r) => r.part === "test");
+  s = section("02", "Способы на одних test-прогонах",
+    "Слева — |ошибка| каждого test-прогона по способам; справа — предсказание против wall_seconds, пунктир — y = x.");
+  let row = chartRow(s);
+  chart(row, () => {
+    const ids = [...new Set(testRuns.map((r) => r.run_id))].sort();
+    return [methodNames.map((m) => {
+      const sub = new Map(testRuns.filter((r) => r.method === m).map((r) => [r.run_id, r]));
+      return { type: "bar", name: m, x: ids, y: ids.map((i) => Math.abs(sub.get(i)?.rel_err ?? NaN)),
+        marker: { color: methodColor(m), line: { width: 0 } },
+        customdata: ids.map((i) => [sub.get(i)?.scheduler, sub.get(i)?.cache, sub.get(i)?.rel_err]),
+        hovertemplate: "%{x} · " + m + "<br>|ошибка| %{y:.1%} (со знаком %{customdata[2]:.1%})<br>%{customdata[0]}, кэш %{customdata[1]}<extra></extra>" };
+    }), baseLayout("|ошибка| T_total по прогонам", "test-прогон", "|ошибка|", { barmode: "group", bargap: 0.25, bargroupgap: 0.08, yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "|ошибка|" } } })];
+  });
+  chart(row, () => {
+    const traces = methodNames.map((m) => {
+      const sub = testRuns.filter((r) => r.method === m);
+      return { type: "scatter", mode: "markers", name: m, x: sub.map((r) => r.wall_seconds), y: sub.map((r) => r.pred),
+        marker: { color: methodColor(m), size: 9, line: { width: 1, color: css("--bg") } },
+        text: sub.map((r) => `${r.run_id} · ${m}<br>wall ${r.wall_seconds.toFixed(1)} s, T̂ ${r.pred.toFixed(1)} s<br>ошибка ${pct(r.rel_err)}`),
+        hovertemplate: "%{text}<extra></extra>" };
+    });
+    traces.push(identityLine(testRuns.map((r) => r.wall_seconds), testRuns.map((r) => r.pred)));
+    return [traces, baseLayout("Предсказание против wall_seconds", "wall_seconds, s", "T̂_total, s")];
+  });
+  if ((D.paired || []).length) {
+    s.append(el("h3", {}, "Парное сравнение"));
+    table(s, D.paired, [
+      { label: "способ A", key: "a", text: true }, { label: "способ B", key: "b", text: true },
+      { label: "прогонов", key: "n" }, { label: "A точнее в", key: "a_better" },
+      { label: "|ош. B| − |ош. A|", key: "mean_diff", fmt: (v) => pct(v) },
+      { label: "Wilcoxon p", key: "wilcoxon_p", fmt: (v) => num(v, 3) },
+    ]);
+  }
+  s.append(el("h3", {}, "По планировщику и кэшу (|ошибка| на test)"));
+  table(s, D.test_breakdown, [
+    { label: "способ", key: "method", text: true }, { label: "планировщик", key: "scheduler", text: true },
+    { label: "кэш", key: "cache" }, { label: "средняя", key: "mean", fmt: (v) => pct(v) },
+    { label: "медиана", key: "median", fmt: (v) => pct(v) }, { label: "максимум", key: "max", fmt: (v) => pct(v) },
+    { label: "n", key: "count" },
+  ]);
+  const flagged = testRuns.filter((r) => r.flag);
+  if (flagged.length) {
+    s.append(el("p", {}, "Помеченные прогоны:"));
+    table(s, flagged, [{ label: "прогон", key: "run_id", text: true }, { label: "способ", key: "method", text: true }, { label: "p_decode", key: "p_decode", fmt: (v) => num(v, 3) }, { label: "пометка", key: "flag", text: true }]);
+  }
+
+  // 3. Curves from methods that provide them.
+  if ((D.curves || []).length) {
+    s = section("03", "Кривые способов", "Точки — train-прогоны (одинаковые x объединены медианой), линия — интерполяция, кресты — test-прогоны поверх кривой.");
+    row = chartRow(s);
+    D.curves.forEach((c) => chart(row, () => {
+      const color = methodColor(c.method);
+      return [[
+        { type: "scatter", mode: "lines+markers", name: "train-точки", x: c.points.map((p) => p.x), y: c.points.map((p) => p.y),
+          line: { color, width: 2 }, marker: { color, size: 8 }, hovertemplate: `${c.x_label} %{x:.4f}<br>${c.y_label} %{y:.3g}<extra>train</extra>` },
+        { type: "scatter", mode: "markers", name: "test-прогоны", x: c.overlay.map((p) => p.x), y: c.overlay.map((p) => p.y),
+          marker: { color: partColor("test"), size: 10, symbol: "x-thin", line: { width: 2, color: partColor("test") } },
+          text: c.overlay.map((p) => p.run_id), hovertemplate: `%{text}<br>${c.x_label} %{x:.4f}<br>${c.y_label} %{y:.3g}<extra>test</extra>` },
+      ], baseLayout(`${c.method}: ${c.name}`, c.x_label, c.y_label)];
+    }));
+  }
+
+  // 4. Prefill (model A) on the train model.
+  const pf = D.prefill_steps.filter((r) => r.source === train?.id);
+  s = section("04", "Prefill: модель A", "По шагам: предсказание против замера и ошибка в зависимости от средней L шага и R шага (ΣC/ΣL).");
+  row = chartRow(s);
+  const pfHover = (r) => `${r.run_id} ${r.step_id}<br>T ${r.T.toFixed(3)} s, T̂ ${r.pred.toFixed(3)} s<br>L̄ ${r.L_mean?.toFixed(0)}, R ${r.R_step?.toFixed(2)}<br>ошибка ${pct(r.rel_err)}`;
+  chart(row, () => { const t = scatterByPart(pf, "T", "pred", "part", pfHover); t.push(identityLine(pf.map((r) => r.T), pf.map((r) => r.pred))); return [t, baseLayout("Prefill-шаг", "замер, s", "предсказание, s")]; });
+  chart(row, () => [scatterByPart(pf, "L_mean", "rel_err", "part", pfHover), baseLayout("Ошибка от L", "средняя L шага, токены", "ошибка", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка" } } })]);
+  chart(row, () => [scatterByPart(pf, "R_step", "rel_err", "part", pfHover), baseLayout("Ошибка от R", "R шага", "ошибка", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка" } } })]);
+
+  // 5. Decode steps for methods with step predictions.
+  const stepMethods = D.methods.filter((m) => m.has_step_predictions);
+  const dc = D.decode_sample.filter((r) => r.source === train?.id);
+  stepMethods.forEach((m, i) => {
+    s = section("05" + (stepMethods.length > 1 ? String.fromCharCode(97 + i) : ""), `Decode-шаги: ${m.name}`,
+      `Слева — случайная выборка до 4000 шагов; в центре и справа — медиана и межквартильный размах ошибки по всем шагам.`);
+    row = chartRow(s);
+    const pk = "pred__" + m.name, ek = "rel_err__" + m.name;
+    const hover = (r) => `${r.run_id}<br>T ${(r.T * 1e3).toFixed(1)} ms, T̂ ${(r[pk] * 1e3).toFixed(1)} ms<br>B ${r.B}, Σℓ ${r.sum_l}<br>ошибка ${pct(r[ek])}`;
+    chart(row, () => { const t = scatterByPart(dc, "T", pk, "part", hover); t.push(identityLine(dc.map((r) => r.T), dc.map((r) => r[pk]))); return [t, baseLayout("Decode-шаг", "замер, s", "предсказание, s")]; });
+    const bins = D.decode_binned[m.name] || {};
+    const onTrain = (list) => (list || []).filter((b) => b.source === train?.id);
+    const errLayout = (t, x) => baseLayout(t, x, "ошибка (медиана)", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка (медиана)" } } });
+    chart(row, () => [binnedTraces(onTrain(bins.sum_l), (p) => partColor(p), (p) => PART_LABEL[p] ?? p), errLayout("Ошибка от Σℓ", "Σℓ, токены")]);
+    chart(row, () => [binnedTraces(onTrain(bins.B), (p) => partColor(p), (p) => PART_LABEL[p] ?? p), errLayout("Ошибка от B", "B, запросов в шаге")]);
+  });
+
+  // 6. Error against SM clock.
+  s = section("06", "Ошибка от частоты SM", "Частота шага — среднее по GPU прогона в ближайшей выборке телеметрии (раз в ~1 с). Модели частоту не используют.");
+  row = chartRow(s);
+  chart(row, () => [scatterByPart(pf, "sm_clock_mhz", "rel_err", "part", pfHover), baseLayout("Prefill-шаги", "частота SM, МГц", "ошибка", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка" } } })]);
+  stepMethods.forEach((m) => chart(row, () => [binnedTraces(((D.decode_binned[m.name] || {}).sm_clock_mhz || []).filter((b) => b.source === train?.id), (p) => partColor(p), (p) => PART_LABEL[p] ?? p),
+    baseLayout(`Decode-шаги: ${m.name}`, "частота SM, МГц", "ошибка (медиана)", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка (медиана)" } } })]));
+  chart(row, () => [methodNames.map((m) => {
+    const sub = D.runs.filter((r) => r.method === m && r.source === train?.id && r.part !== "unused");
+    return { type: "scatter", mode: "markers", name: m, x: sub.map((r) => r.sm_clock_mhz_median), y: sub.map((r) => r.rel_err),
+      marker: { color: methodColor(m), size: 9, line: { width: 1, color: css("--bg") } }, text: sub.map((r) => `${r.run_id} (${r.part})`),
+      hovertemplate: "%{text}<br>%{x:.0f} МГц<br>ошибка %{y:.1%}<extra>" + m + "</extra>" };
+  }), baseLayout("Прогоны: T_total", "медианная частота SM, МГц", "ошибка", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка" } } })]);
+
+  // 7. Transfer sources.
+  const transfers = (D.sources || []).filter((x) => x.role === "transfer");
+  transfers.forEach((src, i) => {
+    s = section("07" + (transfers.length > 1 ? String.fromCharCode(97 + i) : ""), `Перенос: ${src.label}`,
+      `Коэффициенты и кривые — от ${train?.label}, без подгонки. ${src.runs} прогон(ов), ${src.prefill_steps} prefill- и ${src.decode_steps} decode-шагов.`);
+    table(s, D.runs.filter((r) => r.source === src.id), [
+      { label: "прогон", key: "run_id", text: true }, { label: "способ", key: "method", text: true },
+      { label: "wall, s", key: "wall_seconds", fmt: (v) => num(v, 4) }, { label: "T̂, s", key: "pred", fmt: (v) => num(v, 4) },
+      { label: "ошибка", key: "rel_err", fmt: (v) => pct(v) }, { label: "prefill замер, s", key: "prefill_seconds", fmt: (v) => num(v, 3) },
+      { label: "T̂ prefill, s", key: "prefill_hat", fmt: (v) => num(v, 3) }, { label: "p_decode", key: "p_decode", fmt: (v) => num(v, 3) },
+      { label: "пометка", key: "flag", text: true },
+    ]);
+    row = chartRow(s);
+    const tpf = D.prefill_steps.filter((r) => r.source === src.id);
+    chart(row, () => { const t = scatterByPart(tpf, "T", "pred", "part", pfHover); t.push(identityLine(tpf.map((r) => r.T), tpf.map((r) => r.pred))); return [t, baseLayout("Prefill-шаги", "замер, s", "предсказание, s")]; });
+    const tdc = D.decode_sample.filter((r) => r.source === src.id);
+    stepMethods.forEach((m) => chart(row, () => {
+      const pk = "pred__" + m.name;
+      const t = scatterByPart(tdc, "T", pk, "part", (r) => `${r.run_id}<br>T ${(r.T * 1e3).toFixed(1)} ms, T̂ ${(r[pk] * 1e3).toFixed(1)} ms<br>B ${r.B}, Σℓ ${r.sum_l}`);
+      t.push(identityLine(tdc.map((r) => r.T), tdc.map((r) => r[pk])));
+      return [t, baseLayout(`Decode-шаги: ${m.name}`, "замер, s", "предсказание, s")];
+    }));
+  });
+
+  // 8. Coverage.
+  s = section("08", "Покрытие данных", "Диапазоны признаков по каждой модели; гистограммы нормированы, чтобы сравнивать формы распределений.");
+  table(s, D.coverage, [
+    { label: "данные", value: (r) => sourceLabel(r.source), text: true }, { label: "признак", key: "variable", text: true },
+    { label: "min", key: "min", fmt: (v) => num(v, 4) }, { label: "p05", key: "p05", fmt: (v) => num(v, 4) },
+    { label: "медиана", key: "median", fmt: (v) => num(v, 4) }, { label: "p95", key: "p95", fmt: (v) => num(v, 4) },
+    { label: "max", key: "max", fmt: (v) => num(v, 4) }, { label: "n", key: "n" },
+  ]);
+  row = chartRow(s);
+  const variables = [...new Set(D.coverage.map((r) => r.variable))];
+  variables.forEach((v) => chart(row, () => [(D.sources || []).map((src) => ({
+    type: "histogram", name: src.label, x: (D.coverage_values[src.id] || {})[v] || [], histnorm: "probability", bingroup: 1,
+    opacity: 0.6, marker: { color: src.role === "train" ? partColor("train") : partColor("transfer"), line: { width: 1, color: css("--bg") } },
+    hovertemplate: `${v} %{x}<br>доля %{y:.1%}<extra>${src.label}</extra>`,
+  })), baseLayout(v, v, "доля", { barmode: "overlay", yaxis: { ...baseLayout().yaxis, tickformat: ".0%", title: { text: "доля" } } })]));
+
+  // 9. Notes.
+  s = section("09", "Что посчитать нельзя или с оговорками");
+  s.append(el("ul", { class: "notes" }, ...(D.notes || []).map((n) => el("li", {}, n))));
+}
+
+function renderIndex() {
+  app.append(el("header", {}, el("h1", {}, "Запуски модели времени nano-vLLM"),
+    el("div", { class: "meta" }, el("span", {}, `${D.entries.length} запусков`), el("span", {}, `формат v${D.schema_version}`))));
+  const methods = [...new Set(D.entries.flatMap((e) => Object.keys(e.test_mean_abs || {})))].sort();
+  const transfers = [...new Set(D.entries.flatMap((e) => Object.keys(e.transfer || {})))].sort();
+  const s = section("01", "Все запуски", "Средняя |ошибка| T_total на test по способам и ошибка со знаком на моделях переноса. Ссылка открывает отчёт запуска.");
+  table(s, D.entries, [
+    { label: "запуск", value: (e) => el("a", { href: e.report }, e.run), text: true, mono: true },
+    { label: "fit", key: "fit" }, { label: "decode", key: "decode" }, { label: "seed", key: "seed" },
+    { label: "подбор", key: "train_label", text: true },
+    ...methods.map((m) => ({ label: `test ${m}`, value: (e) => pct((e.test_mean_abs || {})[m]) })),
+    ...transfers.flatMap((t) => methods.map((m) => ({ label: `${t} · ${m}`, value: (e) => pct(((e.transfer || {})[t] || {})[m]) }))),
+    { label: "коммит", value: (e) => (e.git_commit || "").slice(0, 7), mono: true },
+  ]);
+  const row = chartRow(s);
+  chart(row, () => [methods.map((m) => ({
+    type: "scatter", mode: "markers", name: m, x: D.entries.map((e) => e.run), y: D.entries.map((e) => (e.test_mean_abs || {})[m] ?? null),
+    marker: { color: methodColor(m), size: 10, line: { width: 1, color: css("--bg") } }, hovertemplate: "%{x}<br>%{y:.1%}<extra>" + m + "</extra>",
+  })), baseLayout("Средняя |ошибка| на test по запускам", "запуск", "|ошибка|", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "|ошибка|" } } })]);
+}
+
+function drawCharts() {
+  for (const { box, build } of charts) {
+    const [traces, layout] = build();
+    Plotly.react(box, traces, layout, { displaylogo: false, responsive: true, modeBarButtonsToRemove: ["lasso2d", "select2d"] });
+  }
+}
+if (D.kind === "index") renderIndex(); else renderReport();
+if (window.Plotly) drawCharts(); else app.prepend(el("p", { class: "neg" }, "Не удалось загрузить Plotly: графики недоступны, таблицы ниже полные."));
+// Redraw with the other theme's tokens when the viewer switches themes.
+const redraw = () => window.Plotly && drawCharts();
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redraw);
+new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+</script>

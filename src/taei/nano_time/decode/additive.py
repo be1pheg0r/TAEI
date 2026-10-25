@@ -66,8 +66,9 @@ class Additive:
 
     def describe(self) -> dict:
         return {
-            "decode_step_coef": self.coef,
-            "formula": "T_step = d0 + d1*sum_l + d2*B",
+            "formula": "T_total = T_prefill_hat + sum over decode steps of "
+            "(d0 + d1*sum_l + d2*B)",
+            "coef": self.coef,
         }
 
 

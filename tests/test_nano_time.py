@@ -163,3 +163,133 @@ def test_loader_features_and_l_equals_context(tmp_path):
 def test_loader_rejects_inconsistent_l(tmp_path):
     with pytest.raises(ValueError):
         nano_data.load(_write_run(tmp_path, before=900), "toy")
+
+
+def _synthetic_dataset(model="toy", n_sets=2, scale=1.0) -> nano_data.Dataset:
+    rng = np.random.default_rng(1)
+    runs, pf, reqs, dc = [], [], [], []
+    for s in range(n_sets):
+        for cache in ("on", "off"):
+            for rep in range(2):
+                run_id = f"R{s}{cache}{rep}"
+                prompt = 1000.0 * (s + 1)
+                cached = 400.0 if cache == "on" else 0.0
+                new = prompt - cached
+                t_pf = scale * (1e-4 * new + 0.02)
+                steps_dc = 50
+                sum_l = prompt + np.arange(steps_dc)
+                t_dc = scale * (0.05 + 1e-6 * sum_l) * rng.uniform(0.95, 1.05, steps_dc)
+                pf.append(
+                    {
+                        "run_id": run_id,
+                        "step_id": "s1",
+                        "new": new,
+                        "quad": prompt**2 - cached**2,
+                        "T": t_pf,
+                        "sm_clock_mhz": 1600.0,
+                        "model": model,
+                    }
+                )
+                reqs.append(
+                    {
+                        "run_id": run_id,
+                        "step_id": "s1",
+                        "request_id": "q",
+                        "L": prompt,
+                        "C": cached,
+                        "R": cached / prompt,
+                        "new": new,
+                        "quad": prompt**2 - cached**2,
+                        "model": model,
+                    }
+                )
+                dc.append(
+                    pd.DataFrame(
+                        {
+                            "run_id": run_id,
+                            "step_id": [f"d{i}" for i in range(steps_dc)],
+                            "B": 1,
+                            "sum_l": sum_l,
+                            "T": t_dc,
+                            "sm_clock_mhz": 1600.0,
+                            "model": model,
+                        }
+                    )
+                )
+                runs.append(
+                    {
+                        "run_id": run_id,
+                        "model": model,
+                        "set_id": f"set{s}",
+                        "seed": rep,
+                        "condition_id": "C",
+                        "cache": cache,
+                        "scheduler": "x",
+                        "wall_seconds": t_pf + t_dc.sum(),
+                        "P": new,
+                        "O": steps_dc,
+                        "p_decode": steps_dc / (new + steps_dc),
+                        "steps_seconds": t_pf + t_dc.sum(),
+                        "prefill_seconds": t_pf,
+                        "decode_seconds": t_dc.sum(),
+                        "n_prefill_steps": 1,
+                        "n_decode_steps": steps_dc,
+                        "sm_clock_mhz_median": 1600.0,
+                    }
+                )
+    return nano_data.Dataset(
+        pd.DataFrame(runs),
+        pd.DataFrame(pf),
+        pd.DataFrame(reqs),
+        pd.concat(dc, ignore_index=True),
+    )
+
+
+def _document():
+    from taei.nano_time import report_data
+    from taei.nano_time.evaluate import TRAIN_SOURCE, evaluate
+
+    train = _synthetic_dataset()
+    other = _synthetic_dataset("big", n_sets=1, scale=3.0)
+    ev = evaluate(train, {"big model": other}, select("both"), "regression", 0, {})
+    meta = {
+        "meta": {"fit": "regression", "decode": "both", "seed": 0},
+        "labels": {TRAIN_SOURCE: "toy"},
+    }
+    return report_data.build(ev, meta, ["note"])
+
+
+def test_report_document_is_json_and_generic():
+    from taei.nano_time import report_data
+
+    doc = _document()
+    text = json.dumps(doc, allow_nan=False)  # no NaN or numpy values left
+    assert doc["schema_version"] == report_data.SCHEMA_VERSION
+    assert {m["name"] for m in doc["methods"]} == {"additive", "multiplicative"}
+    assert [s["role"] for s in doc["sources"]] == ["train", "transfer"]
+    assert {p["a"] for p in doc["paired"]} | {p["b"] for p in doc["paired"]} == {
+        "additive",
+        "multiplicative",
+    }
+    assert doc["curves"] and doc["decode_binned"]["additive"]["B"]
+    assert "big model" in text or any(s["id"] == "big model" for s in doc["sources"])
+    for row in doc["metrics"]:
+        assert row["mean_abs"] >= 0
+
+
+def test_render_report_embeds_data_safely(tmp_path):
+    from taei.nano_time import report
+
+    doc = _document()
+    doc["notes"] = ["</script><b>x</b>"]
+    page = report.render_report(doc)
+    assert "__REPORT_DATA__" not in page and "</script><b>" not in page
+    assert page.count("<title>") == 1
+    with pytest.raises(ValueError):
+        report.render_report({**doc, "schema_version": 0})
+    run = tmp_path / "20260101_000000"
+    run.mkdir()
+    (run / "time_model.json").write_text(json.dumps(doc), encoding="utf-8")
+    report.write_report(run / "time_model.json")
+    index = report.write_index(tmp_path).read_text(encoding="utf-8")
+    assert "20260101_000000/report.html" in index

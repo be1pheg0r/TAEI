@@ -25,7 +25,7 @@ train_data:
   label: Qwen3-0.6B
   runs_dir: data/qwen-3-06b-768/20261025T092821.424493Z-6636be4c/runs
   run_ids: null # all successful runs
-transfer_data:
-  label: Qwen3-8B R15
-  runs_dir: data/qwen3-8b-340/20261025T155137.987440Z-a0ffb7eb/runs
-  run_ids: [R15] # the only completed 8B run
+transfer_data: # any number of models checked without refitting
+  - label: Qwen3-8B R15
+    runs_dir: data/qwen3-8b-340/20261025T155137.987440Z-a0ffb7eb/runs
+    run_ids: [R15] # the only completed 8B run

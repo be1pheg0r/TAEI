@@ -1,28 +1,29 @@
 """Подбор и проверка модели времени nano-vLLM по готовым прогонам.
 
-Модель A (prefill) и выбранные способы decode подбираются на прогонах первой
-модели по одному стратифицированному разбиению 50/50 и без подгонки
-применяются ко второй модели. В каталог запуска ``runs/<время>/`` пишутся
-``report.html``, ``time_model.json`` (коэффициенты, точки k, метрики, разбиение,
-пометки) и копия кода, которым они получены. GPU не используется.
+Модель A (prefill) и выбранные способы decode подбираются на прогонах модели
+обучения по одному стратифицированному разбиению 50/50 и без подгонки
+применяются к каждой модели переноса. В каталог запуска ``runs/<время>/``
+пишутся ``time_model.json`` (версионированный формат: коэффициенты, точки k,
+метрики, разбиение, таблицы для графиков), ``report.html`` по общему шаблону и
+копия кода; сводная ``runs/index.html`` перестраивается. GPU не используется.
 """
 
+import datetime as dt
 import json
 import shutil
 import subprocess
 from pathlib import Path
 
 import hydra
-import numpy as np
 from hydra.core.hydra_config import HydraConfig
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf
 
 from taei.launch import maybe_launch_detached
 from taei.nano_time import data as nano_data
-from taei.nano_time import report
+from taei.nano_time import report, report_data
 from taei.nano_time.decode import select
-from taei.nano_time.evaluate import evaluate
+from taei.nano_time.evaluate import TRAIN_SOURCE, evaluate
 from taei.runtime import run_experiment
 
 REPO = Path(__file__).resolve().parents[2]
@@ -33,44 +34,34 @@ def main(cfg: DictConfig) -> dict:
     return run_experiment(cfg, run)
 
 
-def _notes(ev, train, transfer) -> list[str]:
-    notes = []
+def _notes(ev, train, transfers) -> list[str]:
     ratio = train.runs["steps_seconds"] / train.runs["wall_seconds"]
-    notes.append(
-        f"Сумма измеренных шагов составляет {ratio.min():.2%}–{ratio.max():.2%} от "
-        "wall_seconds: промежутки между шагами и ~13 мс до и после цикла моделью не "
-        "описываются и входят в ошибку способа additive."
-    )
-    notes.append(
-        "Телеметрия пишется раз в ~1 с, а decode-шаг длится ~0,06–0,3 с: частота шага "
-        "— "
-        "ближайшая выборка, а не среднее по шагу."
-    )
-    if "multiplicative" in ev.methods:
-        notes.append(
-            "Ошибка multiplicative на train занижена по построению: train-прогоны "
-            "сами задают "
-            "узлы k, а остаток на train — это разброс между прогонами с одинаковым "
-            "p_decode "
-            "(разные планировщики), которые объединены медианой и которые k не "
-            "различает. "
-            "Честная оценка — только test."
-        )
-    if transfer is not None:
-        if (transfer.prefill_requests["C"] == 0).all():
+    notes = [
+        f"Сумма измеренных шагов — {ratio.min():.2%}…{ratio.max():.2%} от "
+        "wall_seconds: промежутки между шагами и время до и после цикла моделью "
+        "не описываются и входят в ошибку способов, которые суммируют шаги.",
+        "Телеметрия пишется раз в ~1 с, а шаг длится доли секунды: частота шага — "
+        "ближайшая выборка, а не среднее по шагу.",
+    ]
+    for name, method in ev.methods.items():
+        if hasattr(method, "curves"):
             notes.append(
-                "У переноса кэш выключен (R = 0 у всех запросов): зависимость от R на "
-                "второй "
-                "модели проверить нельзя."
+                f"У способа {name} train-прогоны сами задают узлы кривой, поэтому его "
+                "ошибка на train занижена по построению; честная оценка — test. "
+                "Прогоны с одинаковым x (например, разные планировщики при одном "
+                "p_decode) кривая не различает."
+            )
+    for label, data in transfers.items():
+        if (data.prefill_requests["C"] == 0).all():
+            notes.append(
+                f"{label}: кэш выключен (R = 0 у всех запросов) — зависимость от R "
+                "на этой модели проверить нельзя."
             )
         notes.append(
-            f"У переноса {len(transfer.prefill_steps)} prefill-шагов и "
-            f"{len(transfer.decode_steps)} decode-шагов в одном прогоне: оценка "
-            f"переноса "
-            "по прогону — одна точка."
+            f"{label}: {len(data.runs)} прогон(ов), {len(data.prefill_steps)} "
+            f"prefill- и {len(data.decode_steps)} decode-шагов; оценка T_total — "
+            f"{len(data.runs)} точка(и)."
         )
-    mixed = 0  # nano-vllm schedules prefill and decode in separate steps
-    notes.append(f"Смешанных prefill+decode шагов в данных нет ({mixed}).")
     return notes
 
 
@@ -91,63 +82,44 @@ def run(cfg: DictConfig) -> dict:
     train = nano_data.load(
         REPO / cfg.train_data.runs_dir, cfg.train_data.label, cfg.train_data.run_ids
     )
-    transfer = None
-    if cfg.transfer_data and cfg.transfer_data.runs_dir:
-        transfer = nano_data.load(
-            REPO / cfg.transfer_data.runs_dir,
-            cfg.transfer_data.label,
-            list(cfg.transfer_data.run_ids or []) or None,
+    transfers = {
+        t.label: nano_data.load(
+            REPO / t.runs_dir, t.label, list(t.run_ids) if t.run_ids else None
         )
+        for t in cfg.transfer_data or []
+    }
     logger.info(
-        "loaded {} train-model runs, {} prefill and {} decode steps",
+        "loaded {}: {} runs, {} prefill and {} decode steps; transfer: {}",
+        cfg.train_data.label,
         len(train.runs),
         len(train.prefill_steps),
         len(train.decode_steps),
+        list(transfers),
     )
 
     methods = select(cfg.decode)
     fit_kwargs = {"seed": int(cfg.seed), "trials": int(cfg.optuna.trials)}
-    ev = evaluate(train, transfer, methods, cfg.fit, int(cfg.seed), fit_kwargs)
-
-    notes = _notes(ev, train, transfer)
-    test = ev.runs[ev.runs["part"] == "test"]
-    by_method = test.assign(a=test["rel_err"].abs()).groupby("method")["a"].mean()
-    summary = (
-        f"Подбор: {cfg.train_data.label}, {len(train.runs)} прогонов "
-        f"(train {len(ev.split['train'])}, test {len(ev.split['test'])}, seed "
-        f"{cfg.seed}); "
-        f"fit={cfg.fit}, decode={cfg.decode}. Средняя |ошибка| T_total на test: "
-        + ", ".join(f"{m} {v:.1%}" for m, v in by_method.items())
-        + f". Перенос без подгонки: {cfg.transfer_data.label}."
-    )
+    ev = evaluate(train, transfers, methods, cfg.fit, int(cfg.seed), fit_kwargs)
     meta = {
-        "summary": summary,
-        "runs": train.runs,
-        "prefill_requests": train.prefill_requests,
-        "transfer_requests": transfer.prefill_requests if transfer else None,
-        "transfer_runs": transfer.runs if transfer else None,
-        "transfer_label": cfg.transfer_data.label,
+        "meta": {
+            "experiment": cfg.experiment.name,
+            "created_utc": dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M UTC"),
+            "git_commit": _git_commit(),
+            "fit": cfg.fit,
+            "decode": cfg.decode,
+            "seed": int(cfg.seed),
+            "run_dir": out.name,
+            "config": OmegaConf.to_container(cfg, resolve=True),
+        },
+        "labels": {TRAIN_SOURCE: cfg.train_data.label},
     }
-    (out / "report.html").write_text(report.render(ev, meta, notes), encoding="utf-8")
-
-    results = {
-        "config": OmegaConf.to_container(cfg, resolve=True),
-        "git_commit": _git_commit(),
-        "split": ev.split,
-        "prefill_model_A": ev.prefill.coef,
-        "prefill_model_A_cache_split": ev.prefill_cache_split.coef,
-        "decode_methods": {name: m.describe() for name, m in ev.methods.items()},
-        "metrics": ev.metrics,
-        "runs": json.loads(
-            ev.runs.drop(columns=[], errors="ignore").to_json(orient="records")
-        ),
-        "paired_test_comparison": report.paired_comparison(test),
-        "notes": notes,
-    }
-    (out / "time_model.json").write_text(
-        json.dumps(results, indent=2, ensure_ascii=False, default=float),
-        encoding="utf-8",
+    document = report_data.build(ev, meta, _notes(ev, train, transfers))
+    json_path = out / "time_model.json"
+    json_path.write_text(
+        json.dumps(document, ensure_ascii=False, allow_nan=False), encoding="utf-8"
     )
+    report_path = report.write_report(json_path)
+    index_path = report.write_index(out.parent)
     code = out / "code"
     shutil.copytree(
         REPO / "src/taei/nano_time",
@@ -159,24 +131,15 @@ def run(cfg: DictConfig) -> dict:
         code / "experiment",
         ignore=shutil.ignore_patterns("__pycache__"),
     )
-    logger.info("report: {}", out / "report.html")
+    logger.info("report: {} · index: {}", report_path, index_path)
 
-    metrics = {"report": str(out / "report.html")}
-    for name, value in by_method.items():
-        metrics[f"test_mean_abs_err_{name}"] = float(value)
-    tr = ev.runs[ev.runs["part"] == "transfer"]
-    for _, row in tr.iterrows():
-        metrics[f"transfer_{row['run_id']}_rel_err_{row['method']}"] = float(
-            row["rel_err"]
-        )
-    a_test = [
-        m for m in ev.metrics if m["what"] == "A: prefill step" and m["part"] == "test"
-    ]
-    if a_test:
-        metrics["test_mean_abs_err_prefill_step"] = float(a_test[0]["mean_abs"])
-    return {
-        k: (float(v) if isinstance(v, np.floating) else v) for k, v in metrics.items()
-    }
+    metrics = {"report": str(report_path), "index": str(index_path)}
+    for row in document["metrics"]:
+        name, _, kind = row["what"].partition(": ")
+        if kind == "T_total per run" and row["part"] in ("test", "transfer"):
+            key = "test" if row["part"] == "test" else row["source"].replace(" ", "_")
+            metrics[f"{key}_{name}_mean_abs_err"] = row["mean_abs"]
+    return metrics
 
 
 if __name__ == "__main__":

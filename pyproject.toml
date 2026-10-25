@@ -29,7 +29,6 @@ inference = [
 ]
 # CPU-only fitting and reporting of the nano-vLLM time model (experiments/nano_time_model).
 analysis = [
-    "matplotlib>=3.9",
     "numpy>=2.0",
     "optuna>=4.0",
     "pandas>=2.2",
@@ -49,7 +48,7 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-taei = ["conf/**/*.yaml", "conf/*.yaml"]
+taei = ["conf/**/*.yaml", "conf/*.yaml", "nano_time/*.html"]
 
 [tool.uv.sources]
 flash-attn = { index = "astral-cu130" }

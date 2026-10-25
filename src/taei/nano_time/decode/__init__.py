@@ -10,7 +10,14 @@
 * ``predict_total(data, run_ids) -> pd.Series`` — T̂_total по прогонам;
 * ``flags(data, run_ids) -> pd.Series`` — пометки прогонов (пустая строка, если
   пометок нет);
-* ``describe() -> dict`` — коэффициенты и прочее для отчёта и json.
+* ``describe() -> dict`` — обязательно ``formula`` (строка) и ``coef`` (словарь
+  коротких коэффициентов для таблицы), остальное — для json.
+
+Необязательные хуки (отчёт показывает соответствующий раздел, только если хук
+есть): ``predict_steps(steps)`` — время decode-шагов; ``diagnostics(data,
+run_ids) -> {имя: pd.Series}`` — дополнительные T_total для диагностики;
+``curves(data, run_ids) -> list[dict]`` — кривые с train-точками и
+наложенными прогонами.
 """
 
 from __future__ import annotations
