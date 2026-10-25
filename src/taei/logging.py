@@ -286,7 +286,7 @@ def progress(**kwargs: Any) -> Progress:
 
 
 class _ExperimentProgress:
-    """Truthful work-unit counter with live TTY and bounded plain renderers."""
+    """Completed-work progress with live TTY and readable detached snapshots."""
 
     def __init__(self, total: int, label: str) -> None:
         if total < 0:
@@ -299,6 +299,42 @@ class _ExperimentProgress:
         self._console = rich_console()
         self._live: Progress | None = None
         self._task_id: Any = None
+        self._detached = os.getenv("TAEI_DETACHED_PROGRESS") == "1"
+        self._stop_refresh = threading.Event()
+        self._refresh_thread: threading.Thread | None = None
+        self._state_lock = threading.RLock()
+
+    @staticmethod
+    def _duration(seconds: float) -> str:
+        minutes, seconds = divmod(max(0, int(seconds)), 60)
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours:02}:{minutes:02}:{seconds:02}"
+
+    def _print_detached(self, outcome: str | None = None) -> None:
+        with self._state_lock:
+            elapsed = max(0.0, time.monotonic() - self._started_at)
+            fraction = self.completed / self.total if self.total else 1.0
+            filled = int(fraction * 24)
+            bar = "#" * filled + "-" * (24 - filled)
+            remaining = (
+                elapsed * (self.total - self.completed) / self.completed
+                if self.completed
+                else None
+            )
+            eta = self._duration(remaining) if remaining is not None else "unknown"
+            detail = outcome or self._last_stage or "starting"
+            self._console.print(
+                f"{self.label} [{bar}] {self.completed}/{self.total} "
+                f"({fraction:.1%}) elapsed={self._duration(elapsed)} "
+                f"ETA~{eta} | {detail}",
+                markup=False,
+                highlight=False,
+                soft_wrap=True,
+            )
+
+    def _refresh_detached(self) -> None:
+        while not self._stop_refresh.wait(30.0):
+            self._print_detached()
 
     def __enter__(self) -> _ExperimentProgress:
         self._started_at = time.monotonic()
@@ -320,22 +356,36 @@ class _ExperimentProgress:
             )
             self._live.start()
             self._task_id = self._live.add_task(self.label, total=self.total)
+        elif self._detached:
+            self._print_detached()
+            self._refresh_thread = threading.Thread(
+                target=self._refresh_detached,
+                name="taei-detached-progress",
+                daemon=True,
+            )
+            self._refresh_thread.start()
         else:
             self._console.print(f"{self.label} started: 0/{self.total}")
         return self
 
     def stage(self, description: str) -> None:
-        if description == self._last_stage:
-            return
-        self._last_stage = description
+        with self._state_lock:
+            if description == self._last_stage:
+                return
+            self._last_stage = description
         text = f"{self.label}: {description} ({self.completed}/{self.total} completed)"
         if self._live is not None:
             self._live.update(self._task_id, description=text)
+        elif self._detached:
+            self._print_detached()
         else:
             self._console.print(text)
 
     def advance(self, outcome: str) -> None:
-        self.completed = min(self.completed + 1, self.total)
+        with self._state_lock:
+            self.completed = min(self.completed + 1, self.total)
+            if self._detached:
+                self._last_stage = f"completed ({outcome})"
         if self._live is not None:
             self._live.update(self._task_id, advance=1)
             self._live.update(
@@ -344,12 +394,17 @@ class _ExperimentProgress:
                     f"{self.label}: {self.completed}/{self.total} completed ({outcome})"
                 ),
             )
+        elif self._detached:
+            self._print_detached()
         else:
             self._console.print(
                 f"{self.label}: {self.completed}/{self.total} completed ({outcome})"
             )
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        self._stop_refresh.set()
+        if self._refresh_thread is not None:
+            self._refresh_thread.join()
         status = (
             "finished"
             if exc is None
@@ -366,6 +421,8 @@ class _ExperimentProgress:
                 f"{self.label} {status}: {self.completed}/{self.total} completed "
                 f"in {elapsed:.1f}s"
             )
+        elif self._detached:
+            self._print_detached(status)
         else:
             self._console.print(
                 f"{self.label} {status}: {self.completed}/{self.total} completed "
@@ -374,7 +431,7 @@ class _ExperimentProgress:
 
 
 def experiment_progress(total: int, label: str) -> _ExperimentProgress:
-    """Track real completed work; use a live Rich display only on a capable TTY."""
+    """Render completed work live on TTY or periodically in detached stderr logs."""
     return _ExperimentProgress(total, label)
 
 

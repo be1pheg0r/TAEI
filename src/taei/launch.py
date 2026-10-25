@@ -110,6 +110,9 @@ def maybe_launch_detached(script_path: str | Path) -> bool:
         temporary_path.replace(metadata_path)
 
     save_metadata()
+    child_env = os.environ.copy()
+    child_env["TAEI_DETACHED_PROGRESS"] = "1"
+    child_env["PYTHONUNBUFFERED"] = "1"
     try:
         with (
             stdout_path.open("ab", buffering=0) as stdout_file,
@@ -121,7 +124,7 @@ def maybe_launch_detached(script_path: str | Path) -> bool:
                 stdout=stdout_file,
                 stderr=stderr_file,
                 cwd=cwd,
-                env=os.environ.copy(),
+                env=child_env,
                 start_new_session=True,
             )
     except OSError as exc:
