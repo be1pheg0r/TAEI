@@ -274,7 +274,7 @@ def test_report_document_is_json_and_generic():
     }
     assert doc["curves"] and doc["decode_binned"]["additive"]["B"]
     forms = doc["prefill_forms"]
-    assert forms["table"] and all(r["cv_mean"] >= 0 for r in forms["table"])
+    assert forms["table"] and all(r["set_cv_mean"] >= 0 for r in forms["table"])
     assert all(
         v >= 0 for r in forms["table"] for k, v in r["coef"].items() if k != "alpha"
     )
@@ -299,3 +299,28 @@ def test_render_report_embeds_data_safely(tmp_path):
     report.write_report(run / "time_model.json")
     index = report.write_index(tmp_path).read_text(encoding="utf-8")
     assert "20260101_000000/report.html" in index
+
+
+def test_run_factor_fit_recovers_shape_and_factors():
+    from taei.nano_time.prefill_forms import fit_with_run_factor
+
+    rng = np.random.default_rng(0)
+    rows = []
+    factors = {f"R{i}": f for i, f in enumerate([0.8, 1.0, 1.25, 0.9, 1.1])}
+    for run, factor in factors.items():
+        for _ in range(4):
+            new, cached, b = (
+                rng.uniform(2e3, 1.5e4),
+                rng.uniform(0, 1e4),
+                rng.integers(1, 9),
+            )
+            t = factor * (1e-4 * new + 1e-5 * cached + 0.02 * b)
+            rows.append(
+                {"run_id": run, "N": new, "sumC": cached, "B": float(b), "T": t}
+            )
+    steps = pd.DataFrame(rows)
+    coef, fitted = fit_with_run_factor(steps, ["N", "sumC", "B"])
+    scale = coef[0] / 1e-4  # shape is identified up to the geometric-mean factor
+    assert coef == pytest.approx(scale * np.array([1e-4, 1e-5, 0.02]), rel=1e-3)
+    ratio = fitted / pd.Series(factors)
+    assert ratio.std() / ratio.mean() < 1e-3

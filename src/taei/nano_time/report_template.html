@@ -345,9 +345,9 @@ function renderReport() {
   const pfHover = (r) => `${r.run_id} ${r.step_id}<br>T ${r.T.toFixed(3)} s, T̂ ${r.pred.toFixed(3)} s<br>L̄ ${r.L_mean?.toFixed(0)}, R ${r.R_step?.toFixed(2)}<br>ошибка ${pct(r.rel_err)}`;
   chart(row, () => { const t = scatterByPart(pf, "T", "pred", "part", pfHover); t.push(identityLine(pf.map((r) => r.T), pf.map((r) => r.pred))); return [t, baseLayout("Prefill-шаг", "замер, s", "предсказание, s")]; });
   chart(row, () => [scatterByPart(pf, "L_mean", "rel_err", "part", pfHover), baseLayout("Ошибка от L", "средняя L шага, токены", "ошибка", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка" } } })]);
-  chart(row, () => [scatterByPart(pf, "R_step", "rel_err", "part", pfHover), baseLayout("Ошибка от R", "R шага", "ошибка", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка" } } })]);
+  chart(row, () => [scatterByPart(pf.filter((r) => r.R_step > 0), "R_step", "rel_err", "part", pfHover), baseLayout("Ошибка от R (шаги с кэшем)", "R шага", "ошибка", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка" } } })]);
   s.append(el("h3", {}, "Зависимость ошибки от \\(\\bar L\\) и \\(R\\)"));
-  s.append(el("p", { class: "lede" }, "Медиана и межквартильный размах \\(e\\) prefill-шага по квантильным корзинам; справа — медиана \\(e\\) на сетке \\(\\bar L \\times R_{\\mathrm{step}}\\) (синий — недобор, красный — перебор, в ячейке — число шагов)."));
+  s.append(el("p", { class: "lede" }, "Медиана и межквартильный размах \\(e\\) prefill-шага по квантильным корзинам; графики по \\(R\\) — только шаги с кэшем (\\(R > 0\\)); справа — медиана \\(e\\) на сетке \\(\\bar L \\times R_{\\mathrm{step}}\\) (синий — недобор, красный — перебор, в ячейке — число шагов)."));
   row = chartRow(s);
   const pbins = D.prefill_binned || {};
   const pErrLayout = (t, x) => baseLayout(t, x, "ошибка (медиана)", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка (медиана)" } } });
@@ -366,46 +366,58 @@ function renderReport() {
     }], baseLayout("Медиана e: L̄ × R", "средняя L шага (центр корзины)", "R шага (центр корзины)", { xaxis: { ...baseLayout().xaxis, type: "category", title: { text: "средняя L шага (центр корзины)" } }, yaxis: { ...baseLayout().yaxis, type: "category", title: { text: "R шага (центр корзины)" } } })];
   });
 
-  // Prefill function form: candidate forms, curves against N and the noise floor.
+  // Prefill function form: forms with a per-run factor, R dependence, noise.
   const pfm = D.prefill_forms;
-  if (pfm) {
+  if (pfm && pfm.run_factor) {
     s = section("06", "Форма prefill: какая функция описывает время",
-      `Только prefill-шаги (один токен на запрос, decode не входит), \\(N = \\sum L(1-R)\\) — новые токены шага. Каждая форма подбирается на 5 наборах и проверяется на шестом (leave-one-set-out, ${pfm.n_groups} фолдов, ${pfm.n_steps} шагов); коэффициенты \\(\\ge 0\\).`);
-    const nz = pfm.noise;
-    s.append(el("p", {}, `Нижняя граница ошибки: ${nz.identical_groups} пар шагов с одинаковым составом запросов (одинаковые \\(L\\) и \\(C\\)) из разных прогонов отличаются по времени в среднем на ${pct(nz.mean_abs_dev)} от среднего пары. ` +
-      `Дисперсия логарифма остатка линейной формы между прогонами ${nz.var_between_runs.toFixed(3)} против ${nz.var_within_runs.toFixed(3)} внутри прогона: основная часть ошибки — смещение всего прогона, а не форма функции. Лучшая форма по CV: «${pfm.best}».`));
+      `Только prefill-шаги (один токен на запрос, decode не входит, пересчёта нет): ${pfm.n_steps} шагов в ${pfm.n_runs} прогонах. ` +
+      `Время шага \\(=\\) форма \\(\\times\\) множитель прогона (состояние общей машины), поэтому форма подбирается с отдельным множителем на каждый прогон и проверяется так: шаг предсказывается по форме, подобранной без него, и по множителю его прогона, оценённому на остальных шагах этого прогона.`);
+    const rf = pfm.run_factor, rq = pfm.request_R;
+    s.append(el("p", {}, `Лучшая форма: \\(${pfm.best_latex}\\) — ошибка внутри прогона ${pct(pfm.table[0].in_run_mean)}. ` +
+      `Множитель прогона \\(\\in [${rf.p05.toFixed(2)},\\ ${rf.p95.toFixed(2)}]\\) (5–95%): без него у нового прогона ошибка около ${pct(pfm.table[0].set_cv_mean)} — это смещение прогона, а не форма. ` +
+      (pfm.cached_to_new_cost != null ? `Токен из кэша стоит \\(e/a = ${pfm.cached_to_new_cost.toFixed(2)}\\) от нового.` : "")));
+    s.append(el("p", { class: "lede" }, `Данные по \\(R\\): ${rq.hit_count} запросов-попаданий с \\(R \\in [${rq.hit_min?.toFixed(2)},\\ ${rq.hit_max?.toFixed(2)}]\\) и ${rq.zero_count} запросов с \\(R = 0\\) (промахи и прогоны без кэша). ` +
+      `В шаг попадают попадания и промахи вперемешку, поэтому у шагов с кэшем \\(R_{\\mathrm{step}} = \\sum C / \\sum L \\in [${rq.step_R_min_on?.toFixed(2)},\\ ${rq.step_R_max_on?.toFixed(2)}]\\); \\(R\\) отдельного запроса входит в форму линейно через \\(\\sum C\\).`));
     const formCoef = (c) => `\\(${Object.entries(c).map(([k, v]) => `${k === "alpha" ? "\\alpha" : texName(k)} = ${texNum(v)}`).join(",\\ ")}\\)`;
     table(s, pfm.table, [
       { label: "форма", key: "name", text: true },
       { label: "функция", value: (r) => `\\(${r.latex}\\)`, text: true },
       { label: "параметров", key: "params" },
-      { label: "CV средняя", key: "cv_mean", fmt: (v) => pct(v) },
-      { label: "CV медиана", key: "cv_median", fmt: (v) => pct(v) },
-      { label: "CV максимум", key: "cv_max", fmt: (v) => pct(v) },
-      { label: "на обучении", key: "in_sample_mean", fmt: (v) => pct(v) },
-      { label: "AIC (log)", key: "aic_log", fmt: (v) => v.toFixed(1) },
+      { label: "внутри прогона: средняя", key: "in_run_mean", fmt: (v) => pct(v) },
+      { label: "медиана", key: "in_run_median", fmt: (v) => pct(v) },
+      { label: "максимум", key: "in_run_max", fmt: (v) => pct(v) },
+      { label: "новый прогон (leave-one-set-out)", key: "set_cv_mean", fmt: (v) => pct(v) },
       { label: "коэффициенты", value: (r) => formCoef(r.coef), text: true },
     ]);
     row = chartRow(s);
     chart(row, () => {
       const traces = ["off", "on"].map((c) => {
         const sub = pfm.points.filter((r) => r.cache === c);
-        return { type: "scatter", mode: "markers", name: `кэш ${c}`, x: sub.map((r) => r.N), y: sub.map((r) => r.T),
+        return { type: "scatter", mode: "markers", name: `кэш ${c}`, x: sub.map((r) => r.R_step), y: sub.map((r) => r.per_token),
           marker: { color: c === "on" ? partColor("transfer") : partColor("train"), size: 8, opacity: 0.8, line: { width: 1, color: css("--bg") } },
-          text: sub.map((r) => `${r.run_id} ${r.step_id}<br>N ${r.N}, B ${r.B}, R ${r.R_step.toFixed(2)}<br>T ${r.T.toFixed(3)} s<br>${r.scheduler}`),
+          text: sub.map((r) => `${r.run_id} ${r.step_id}<br>R ${r.R_step.toFixed(2)}, B ${r.B}<br>ΣL ${r.sumL}, ΣC ${r.sumC}`),
+          hovertemplate: "%{text}<br>%{y:.3f}<extra></extra>" };
+      });
+      traces.push({ type: "scatter", mode: "lines", name: `форма для запроса L = ${Math.round(pfm.r_curve.L_ref)}`, x: pfm.r_curve.x, y: pfm.r_curve.y,
+        line: { color: css("--fg"), width: 2 }, hoverinfo: "skip" });
+      return [traces, baseLayout("T / T(R = 0) от R", "R = ΣC / ΣL", "T / T(R = 0), без множителя прогона и d·B")];
+    });
+    chart(row, () => {
+      const traces = ["off", "on"].map((c) => {
+        const sub = pfm.points.filter((r) => r.cache === c);
+        return { type: "scatter", mode: "markers", name: `кэш ${c}`, x: sub.map((r) => r.N), y: sub.map((r) => r.T_norm),
+          marker: { color: c === "on" ? partColor("transfer") : partColor("train"), size: 8, opacity: 0.8, line: { width: 1, color: css("--bg") } },
+          text: sub.map((r) => `${r.run_id} ${r.step_id}<br>N ${r.N}, B ${r.B}, R ${r.R_step.toFixed(2)}<br>T ${r.T.toFixed(3)} s, без множителя ${r.T_norm.toFixed(3)} s`),
           hovertemplate: "%{text}<extra></extra>" };
       });
-      const dash = { "linear": "solid", "poly N²": "dash", "power": "dot" };
-      pfm.curves.forEach((c) => traces.push({ type: "scatter", mode: "lines", name: c.name, x: c.x, y: c.y,
-        line: { color: css("--fg"), width: 2, dash: dash[c.name] || "solid" }, hoverinfo: "skip" }));
-      return [traces, baseLayout("T prefill-шага от N", "N — новые токены шага", "T, s")];
+      return [traces, baseLayout("T / множитель от N", "N — новые токены шага", "T / множитель прогона, s")];
     });
     chart(row, () => {
       const xs = pfm.pairs.map((p) => p.x), ys = pfm.pairs.map((p) => p.y);
-      return [[{ type: "scatter", mode: "markers", name: "пары с одинаковым составом", x: xs, y: ys,
+      return [[{ type: "scatter", mode: "markers", name: "одинаковый состав, разные прогоны", x: xs, y: ys,
         marker: { color: partColor("test"), size: 8, line: { width: 1, color: css("--bg") } },
         text: pfm.pairs.map((p) => `${p.a} vs ${p.b}<br>N ${p.N}<br>${p.x.toFixed(3)} s vs ${p.y.toFixed(3)} s`), hovertemplate: "%{text}<extra></extra>" },
-        identityLine(xs, ys)], baseLayout("Шум: одинаковая работа в разных прогонах", "T в одном прогоне, s", "T в другом прогоне, s")];
+        identityLine(xs, ys)], baseLayout("Одинаковые шаги", "T в одном прогоне, s", "T в другом прогоне, s")];
     });
   }
 

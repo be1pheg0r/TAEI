@@ -191,11 +191,16 @@ def build(ev: Evaluation, meta: dict, notes: list[str]) -> dict:
     )
     step_lr["R_step"] = step_lr["C_sum"] / step_lr["L_sum"]
     pf = ev.prefill_steps.merge(step_lr, on=["source", "run_id", "step_id"], how="left")
+    # R views use only steps with cached tokens: cache-off runs put every step at
+    # R = 0 and would hide the dependence.
+    cached = pf[pf["R_step"] > 0]
     prefill_binned = {
         "L_mean": binned(pf, "L_mean", "rel_err", bins=8),
-        "R_step": binned(pf, "R_step", "rel_err", bins=6),
+        "R_step": binned(cached, "R_step", "rel_err", bins=6),
     }
-    prefill_grid = grid(pf[pf["source"] == TRAIN_SOURCE], "L_mean", "R_step", "rel_err")
+    prefill_grid = grid(
+        cached[cached["source"] == TRAIN_SOURCE], "L_mean", "R_step", "rel_err"
+    )
 
     # Decode: a plotting sample per source, binned statistics on all steps.
     dc = ev.decode_steps

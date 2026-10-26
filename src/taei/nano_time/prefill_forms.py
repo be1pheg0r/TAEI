@@ -1,12 +1,17 @@
-"""Какая функция описывает время prefill-шага: сравнение форм и уровень шума.
+"""Какая функция описывает время prefill-шага: формы, множитель прогона и R.
 
-Используются только prefill-шаги (каждый даёт один токен на запрос, decode в
-них не входит). Кандидаты — линейные по признакам формы с коэффициентами >= 0
-(подбор NNLS по относительной ошибке) и степенная ``c + a·N^α``; N = ΣL(1−R) —
-новые токены шага. Проверка — leave-one-group-out по наборам (``set_id``):
-форма оценивается на наборе, которого не видела. Нижняя граница ошибки берётся
-из шагов с одинаковым составом запросов (одинаковые L и C) в разных прогонах:
-их разброс не может объяснить никакая функция от состава шага.
+Используются только prefill-шаги: каждый даёт один токен на запрос, decode в
+них не входит, пересчёта (recompute) в данных нет. Устройство данных: в каждом
+наборе 8 длин × пара hit/miss с одинаковыми token ID, в прогонах без кэша те же
+запросы идут с C = 0; в один шаг попадают hit и miss вперемешку, поэтому
+R шага узкий, а R отдельного запроса (0,09…0,998) входит в форму линейно через
+ΣC. Время шага домножается на множитель прогона (состояние общей машины:
+частота, чужие задачи), поэтому коэффициенты формы подбираются с отдельным
+множителем на прогон: форма определяется сравнениями шагов внутри прогона.
+
+Оценка формы: (1) с множителем прогона — каждый шаг предсказывается по форме,
+подобранной без него, и по множителю, оценённому на остальных шагах того же
+прогона; (2) без множителя — leave-one-set-out, как будет у нового прогона.
 """
 
 from __future__ import annotations
@@ -17,17 +22,31 @@ from scipy.optimize import least_squares, nnls
 
 from .data import Dataset
 
-# name, TeX, feature columns (a constant is always added)
-LINEAR_FORMS = [
-    ("linear", r"a N + c", ["N"]),
-    ("model A", r"a N + b \sum (L^2 - C^2) + c", ["N", "Q"]),
-    ("poly N²", r"a N + b N^2 + c", ["N", "N2"]),
-    ("cache cost", r"a N + e \sum C + c", ["N", "sumC"]),
-    ("per request", r"a N + d B + c", ["N", "B"]),
-    ("A + per request", r"a N + b \sum (L^2 - C^2) + d B + c", ["N", "Q", "B"]),
+# name, TeX, feature columns ("one" is a constant term)
+FORMS = [
+    ("new tokens", r"a N", ["N"]),
+    ("new + const", r"a N + c", ["N", "one"]),
+    ("model A", r"a N + b \sum (L^2 - C^2)", ["N", "Q"]),
+    ("poly N²", r"a N + b N^2", ["N", "N2"]),
+    ("cache cost", r"a N + e \sum C", ["N", "sumC"]),
+    ("cache cost + per request", r"a N + e \sum C + d B", ["N", "sumC", "B"]),
+    (
+        "A + cache cost + per request",
+        r"a N + e \sum C + b \sum (L^2 - C^2) + d B",
+        ["N", "sumC", "Q", "B"],
+    ),
+    ("total tokens", r"a \sum L + c", ["sumL", "one"]),
 ]
 POWER = ("power", r"c + a N^{\alpha}")
-COEF_NAMES = {"N": "a", "Q": "b", "N2": "b", "sumC": "e", "B": "d"}
+COEF_NAMES = {
+    "N": "a",
+    "Q": "b",
+    "N2": "b",
+    "sumC": "e",
+    "B": "d",
+    "sumL": "a",
+    "one": "c",
+}
 
 
 def step_table(data: Dataset) -> pd.DataFrame:
@@ -41,7 +60,11 @@ def step_table(data: Dataset) -> pd.DataFrame:
         )
         .rename("content")
     )
-    sums = reqs.groupby(["run_id", "step_id"]).agg(sumC=("C", "sum"), sumL=("L", "sum"))
+    sums = (
+        reqs.assign(L2=reqs["L"] ** 2)
+        .groupby(["run_id", "step_id"])
+        .agg(sumC=("C", "sum"), sumL=("L", "sum"), sumL2=("L2", "sum"))
+    )
     steps = (
         data.prefill_steps.merge(sums.reset_index(), on=["run_id", "step_id"])
         .merge(content.reset_index(), on=["run_id", "step_id"])
@@ -49,87 +72,155 @@ def step_table(data: Dataset) -> pd.DataFrame:
     )
     steps["N"], steps["Q"] = steps["new"], steps["quad"]
     steps["N2"] = steps["N"] ** 2
+    steps["one"] = 1.0
     steps["R_step"] = steps["sumC"] / steps["sumL"]
     return steps
 
 
-def _fit_linear(steps, cols):
-    X = np.column_stack(
-        [steps[c].to_numpy(float) for c in cols] + [np.ones(len(steps))]
-    )
+def fit_with_run_factor(steps: pd.DataFrame, cols, iters: int = 40):
+    """NNLS shape coefficients times a factor per run (geometric mean factor = 1)."""
+    X = steps[cols].to_numpy(float)
+    y = steps["T"].to_numpy(float)
+    runs = steps["run_id"].to_numpy()
+    u = np.zeros(len(steps))
+    coef = np.zeros(len(cols))
+    for _ in range(iters):
+        scaled = y * np.exp(-u)
+        coef, _ = nnls(X / scaled[:, None], np.ones(len(steps)))
+        pred = X @ coef
+        if not np.all(pred > 0):
+            break
+        mean_log = pd.Series(np.log(y / pred)).groupby(runs).transform("mean")
+        u = (mean_log - mean_log.mean()).to_numpy()
+    factors = pd.Series(np.exp(u), index=runs).groupby(level=0).first()
+    return coef, factors
+
+
+def _fit_pooled(steps, cols):
+    X = steps[cols].to_numpy(float)
     y = steps["T"].to_numpy(float)
     coef, _ = nnls(X / y[:, None], np.ones(len(y)))
+    return coef
 
-    def predict(frame):
-        Z = np.column_stack(
-            [frame[c].to_numpy(float) for c in cols] + [np.ones(len(frame))]
+
+def _coef_dict(cols, coef):
+    return {COEF_NAMES[c]: float(v) for c, v in zip(cols, coef, strict=True)}
+
+
+def _within_run_loo(steps, cols) -> np.ndarray:
+    """Each step from a shape fitted without it and its run's other steps."""
+    errors = []
+    for i in range(len(steps)):
+        run = steps["run_id"].iat[i]
+        others = steps.drop(index=steps.index[i])
+        mine = others["run_id"] == run
+        if not mine.any():
+            continue
+        coef, _ = fit_with_run_factor(others, cols, iters=15)
+        own = others.loc[mine]
+        ratio = own["T"].to_numpy(float) / (own[cols].to_numpy(float) @ coef)
+        pred = (steps[cols].iloc[i].to_numpy(float) @ coef) * np.exp(
+            np.log(ratio).mean()
         )
-        return Z @ coef
-
-    names = [COEF_NAMES[c] for c in cols] + ["c"]
-    return predict, dict(zip(names, map(float, coef), strict=True))
+        errors.append(abs(pred - steps["T"].iat[i]) / steps["T"].iat[i])
+    return np.asarray(errors)
 
 
-def _fit_power(steps):
-    N = steps["N"].to_numpy(float)
+def _set_cv(steps, cols) -> np.ndarray:
+    groups = steps["set_id"].to_numpy()
+    oof = np.full(len(steps), np.nan)
+    for g in np.unique(groups):
+        coef = _fit_pooled(steps[groups != g], cols)
+        oof[groups == g] = steps.loc[groups == g, cols].to_numpy(float) @ coef
     y = steps["T"].to_numpy(float)
+    return np.abs(oof - y) / y
 
-    def residuals(t):
-        return (np.exp(t[0]) + np.exp(t[1]) * N ** t[2] - y) / y
 
-    t = least_squares(residuals, [np.log(0.05), np.log(1e-4), 1.0]).x
-    c, a, alpha = np.exp(t[0]), np.exp(t[1]), t[2]
-    return (lambda f: c + a * f["N"].to_numpy(float) ** alpha), {
-        "a": float(a),
-        "alpha": float(alpha),
-        "c": float(c),
-    }
+def _power_set_cv(steps) -> tuple[np.ndarray, dict]:
+    def fit(frame):
+        N, y = frame["N"].to_numpy(float), frame["T"].to_numpy(float)
+        t = least_squares(
+            lambda t: (np.exp(t[0]) + np.exp(t[1]) * N ** t[2] - y) / y,
+            [np.log(0.05), np.log(1e-4), 1.0],
+        ).x
+        return np.exp(t[0]), np.exp(t[1]), t[2]
+
+    groups = steps["set_id"].to_numpy()
+    oof = np.full(len(steps), np.nan)
+    for g in np.unique(groups):
+        c, a, alpha = fit(steps[groups != g])
+        oof[groups == g] = c + a * steps.loc[groups == g, "N"].to_numpy(float) ** alpha
+    c, a, alpha = fit(steps)
+    y = steps["T"].to_numpy(float)
+    return np.abs(oof - y) / y, {"a": float(a), "alpha": float(alpha), "c": float(c)}
 
 
 def analyze(data: Dataset) -> dict:
     steps = step_table(data)
-    y = steps["T"].to_numpy(float)
-    groups = steps["set_id"].to_numpy()
-    forms = [(n, tex, cols) for n, tex, cols in LINEAR_FORMS] + [(*POWER, None)]
-    table, fitted = [], {}
-    for name, tex, cols in forms:
-        fit = (lambda f, cols=cols: _fit_linear(f, cols)) if cols else _fit_power
-        oof = np.full(len(steps), np.nan)
-        for g in np.unique(groups):
-            train, test = steps[groups != g], steps[groups == g]
-            oof[groups == g] = fit(train)[0](test)
-        predict, coef = fit(steps)
-        in_sample = predict(steps)
-        err_cv = np.abs(oof - y) / y
-        k = len(coef)
-        rss = float(np.sum(np.log(in_sample / y) ** 2))
+    table = []
+    for name, tex, cols in FORMS:
+        coef, _ = fit_with_run_factor(steps, cols)
+        in_run = _within_run_loo(steps, cols)
+        pooled = _set_cv(steps, cols)
         table.append(
             {
                 "name": name,
                 "latex": rf"\hat T = {tex}",
-                "params": k,
-                "cv_mean": float(err_cv.mean()),
-                "cv_median": float(np.median(err_cv)),
-                "cv_max": float(err_cv.max()),
-                "in_sample_mean": float(np.mean(np.abs(in_sample - y) / y)),
-                "aic_log": float(len(y) * np.log(rss / len(y)) + 2 * k),
-                "coef": coef,
+                "params": len(cols),
+                # None when no run has a second prefill step to compare with.
+                "in_run_mean": float(in_run.mean()) if len(in_run) else None,
+                "in_run_median": float(np.median(in_run)) if len(in_run) else None,
+                "in_run_max": float(in_run.max()) if len(in_run) else None,
+                "set_cv_mean": float(pooled.mean()),
+                "coef": _coef_dict(cols, coef),
             }
         )
-        fitted[name] = predict
+    pooled, power_coef = _power_set_cv(steps)
+    table.append(
+        {
+            "name": POWER[0],
+            "latex": rf"\hat T = {POWER[1]}",
+            "params": 3,
+            "in_run_mean": None,
+            "in_run_median": None,
+            "in_run_max": None,
+            "set_cv_mean": float(pooled.mean()),
+            "coef": power_coef,
+        }
+    )
+    ranked = [r for r in table if r["in_run_mean"] is not None]
+    best = (
+        min(ranked, key=lambda r: r["in_run_mean"])
+        if ranked
+        else min(table[:-1], key=lambda r: r["set_cv_mean"])
+    )
+    best_cols = next(cols for name, _, cols in FORMS if name == best["name"])
+    coef, factors = fit_with_run_factor(steps, best_cols)
+    c = _coef_dict(best_cols, coef)
 
-    # Curves against N for forms that depend on N only.
-    grid = pd.DataFrame({"N": np.linspace(steps["N"].min(), steps["N"].max(), 80)})
-    grid["N2"] = grid["N"] ** 2
-    curves = [
-        {"name": name, "x": grid["N"].tolist(), "y": fitted[name](grid).tolist()}
-        for name in ("linear", "poly N²", "power")
-    ]
+    # R dependence: step time with the run factor and per-request overhead
+    # removed, relative to the same requests with nothing cached; the curve is
+    # the best form for one request of the median hit length L_ref:
+    # (a L (1-R) + e L R + b L^2 (1-R^2)) / (a L + b L^2).
+    a = c.get("a", np.nan)
+    e = c.get("e", 0.0)
+    b = c.get("b", 0.0) if "Q" in best_cols else 0.0
+    d = c.get("d", 0.0)
+    steps["T_norm"] = steps["T"] / steps["run_id"].map(factors).to_numpy()
+    full = a * steps["sumL"] + b * steps["sumL2"]
+    steps["per_token"] = (steps["T_norm"] - d * steps["B"]) / full
+    r_grid = np.linspace(0, 1, 51)
+    reqs = data.prefill_requests
+    hits = reqs.loc[reqs["C"] > 0, "R"]
+    l_ref = float(reqs.loc[reqs["C"] > 0, "L"].median()) if len(hits) else 2000.0
+    curve = (
+        a * l_ref * (1 - r_grid) + e * l_ref * r_grid + b * l_ref**2 * (1 - r_grid**2)
+    ) / (a * l_ref + b * l_ref**2)
+    on = steps["sumC"] > 0
 
     # Noise floor: identical step content measured in different runs.
     dup = steps.groupby("content").filter(lambda g: len(g) > 1)
-    mean_t = dup.groupby("content")["T"].transform("mean")
-    dev = (dup["T"] / mean_t - 1).abs()
+    dev = (dup["T"] / dup.groupby("content")["T"].transform("mean") - 1).abs()
     pairs = [
         {
             "x": float(g["T"].iloc[0]),
@@ -141,26 +232,55 @@ def analyze(data: Dataset) -> dict:
         for _, g in dup.groupby("content")
         if len(g) == 2
     ]
-    best = min(table, key=lambda r: r["cv_mean"])
-    log_res = np.log(y / fitted["linear"](steps))
-    by_run = pd.Series(log_res).groupby(steps["run_id"].to_numpy())
     return {
-        "table": sorted(table, key=lambda r: r["cv_mean"]),
+        "table": sorted(
+            table,
+            key=lambda r: (
+                r["in_run_mean"] is None,
+                r["in_run_mean"] or r["set_cv_mean"],
+            ),
+        ),
         "best": best["name"],
+        "best_latex": best["latex"],
+        "best_coef": c,
+        "cached_to_new_cost": float(e / a) if a else None,
+        "run_factor": {
+            "p05": float(np.percentile(factors, 5)),
+            "median": float(np.median(factors)),
+            "p95": float(np.percentile(factors, 95)),
+            "values": [{"run_id": k, "factor": float(v)} for k, v in factors.items()],
+        },
         "points": steps[
-            ["run_id", "step_id", "N", "T", "cache", "scheduler", "R_step", "B"]
+            [
+                "run_id",
+                "step_id",
+                "N",
+                "T",
+                "T_norm",
+                "per_token",
+                "cache",
+                "scheduler",
+                "R_step",
+                "B",
+                "sumL",
+                "sumC",
+            ]
         ].to_dict(orient="records"),
-        "curves": curves,
+        "r_curve": {"x": r_grid.tolist(), "y": curve.tolist(), "L_ref": l_ref},
+        "request_R": {
+            "hit_count": int(len(hits)),
+            "hit_min": float(hits.min()) if len(hits) else None,
+            "hit_max": float(hits.max()) if len(hits) else None,
+            "zero_count": int((reqs["C"] == 0).sum()),
+            "step_R_min_on": float(steps.loc[on, "R_step"].min()) if on.any() else None,
+            "step_R_max_on": float(steps.loc[on, "R_step"].max()) if on.any() else None,
+        },
         "pairs": pairs,
         "noise": {
             "identical_groups": int(dup["content"].nunique()),
-            "identical_steps": int(len(dup)),
-            "mean_abs_dev": float(dev.mean()),
-            "median_abs_dev": float(dev.median()),
-            "var_between_runs": float(by_run.mean().var()),
-            "var_within_runs": float(by_run.var().mean()),
+            "mean_abs_dev": float(dev.mean()) if len(dev) else None,
         },
         "n_steps": int(len(steps)),
-        "n_groups": int(len(np.unique(groups))),
-        "N_range": [float(steps["N"].min()), float(steps["N"].max())],
+        "n_runs": int(steps["run_id"].nunique()),
+        "n_groups": int(steps["set_id"].nunique()),
     }
