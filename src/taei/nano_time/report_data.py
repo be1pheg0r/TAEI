@@ -18,6 +18,7 @@ import pandas as pd
 from .evaluate import TRAIN_SOURCE, Evaluation
 from .fit import LATEX as FIT_LATEX
 from .prefill import LATEX as PREFILL_LATEX
+from .prefill_forms import analyze as analyze_prefill_forms
 
 # Notation shared by every model in the report (inline TeX).
 NOTATION = [
@@ -333,6 +334,7 @@ def build(ev: Evaluation, meta: dict, notes: list[str]) -> dict:
             "decode_binned": decode_binned,
             "prefill_binned": prefill_binned,
             "prefill_grid": prefill_grid,
+            "prefill_forms": analyze_prefill_forms(ev.datasets[TRAIN_SOURCE]),
             "coverage": coverage,
             "coverage_values": coverage_values,
             "notes": notes,

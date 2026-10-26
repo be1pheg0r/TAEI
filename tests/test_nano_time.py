@@ -186,6 +186,7 @@ def _synthetic_dataset(model="toy", n_sets=2, scale=1.0) -> nano_data.Dataset:
                         "new": new,
                         "quad": prompt**2 - cached**2,
                         "T": t_pf,
+                        "B": 1,
                         "sm_clock_mhz": 1600.0,
                         "model": model,
                     }
@@ -272,6 +273,11 @@ def test_report_document_is_json_and_generic():
         "multiplicative",
     }
     assert doc["curves"] and doc["decode_binned"]["additive"]["B"]
+    forms = doc["prefill_forms"]
+    assert forms["table"] and all(r["cv_mean"] >= 0 for r in forms["table"])
+    assert all(
+        v >= 0 for r in forms["table"] for k, v in r["coef"].items() if k != "alpha"
+    )
     assert "big model" in text or any(s["id"] == "big model" for s in doc["sources"])
     for row in doc["metrics"]:
         assert row["mean_abs"] >= 0

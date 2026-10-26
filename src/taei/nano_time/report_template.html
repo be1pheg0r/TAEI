@@ -366,11 +366,54 @@ function renderReport() {
     }], baseLayout("Медиана e: L̄ × R", "средняя L шага (центр корзины)", "R шага (центр корзины)", { xaxis: { ...baseLayout().xaxis, type: "category", title: { text: "средняя L шага (центр корзины)" } }, yaxis: { ...baseLayout().yaxis, type: "category", title: { text: "R шага (центр корзины)" } } })];
   });
 
+  // Prefill function form: candidate forms, curves against N and the noise floor.
+  const pfm = D.prefill_forms;
+  if (pfm) {
+    s = section("06", "Форма prefill: какая функция описывает время",
+      `Только prefill-шаги (один токен на запрос, decode не входит), \\(N = \\sum L(1-R)\\) — новые токены шага. Каждая форма подбирается на 5 наборах и проверяется на шестом (leave-one-set-out, ${pfm.n_groups} фолдов, ${pfm.n_steps} шагов); коэффициенты \\(\\ge 0\\).`);
+    const nz = pfm.noise;
+    s.append(el("p", {}, `Нижняя граница ошибки: ${nz.identical_groups} пар шагов с одинаковым составом запросов (одинаковые \\(L\\) и \\(C\\)) из разных прогонов отличаются по времени в среднем на ${pct(nz.mean_abs_dev)} от среднего пары. ` +
+      `Дисперсия логарифма остатка линейной формы между прогонами ${nz.var_between_runs.toFixed(3)} против ${nz.var_within_runs.toFixed(3)} внутри прогона: основная часть ошибки — смещение всего прогона, а не форма функции. Лучшая форма по CV: «${pfm.best}».`));
+    const formCoef = (c) => `\\(${Object.entries(c).map(([k, v]) => `${k === "alpha" ? "\\alpha" : texName(k)} = ${texNum(v)}`).join(",\\ ")}\\)`;
+    table(s, pfm.table, [
+      { label: "форма", key: "name", text: true },
+      { label: "функция", value: (r) => `\\(${r.latex}\\)`, text: true },
+      { label: "параметров", key: "params" },
+      { label: "CV средняя", key: "cv_mean", fmt: (v) => pct(v) },
+      { label: "CV медиана", key: "cv_median", fmt: (v) => pct(v) },
+      { label: "CV максимум", key: "cv_max", fmt: (v) => pct(v) },
+      { label: "на обучении", key: "in_sample_mean", fmt: (v) => pct(v) },
+      { label: "AIC (log)", key: "aic_log", fmt: (v) => v.toFixed(1) },
+      { label: "коэффициенты", value: (r) => formCoef(r.coef), text: true },
+    ]);
+    row = chartRow(s);
+    chart(row, () => {
+      const traces = ["off", "on"].map((c) => {
+        const sub = pfm.points.filter((r) => r.cache === c);
+        return { type: "scatter", mode: "markers", name: `кэш ${c}`, x: sub.map((r) => r.N), y: sub.map((r) => r.T),
+          marker: { color: c === "on" ? partColor("transfer") : partColor("train"), size: 8, opacity: 0.8, line: { width: 1, color: css("--bg") } },
+          text: sub.map((r) => `${r.run_id} ${r.step_id}<br>N ${r.N}, B ${r.B}, R ${r.R_step.toFixed(2)}<br>T ${r.T.toFixed(3)} s<br>${r.scheduler}`),
+          hovertemplate: "%{text}<extra></extra>" };
+      });
+      const dash = { "linear": "solid", "poly N²": "dash", "power": "dot" };
+      pfm.curves.forEach((c) => traces.push({ type: "scatter", mode: "lines", name: c.name, x: c.x, y: c.y,
+        line: { color: css("--fg"), width: 2, dash: dash[c.name] || "solid" }, hoverinfo: "skip" }));
+      return [traces, baseLayout("T prefill-шага от N", "N — новые токены шага", "T, s")];
+    });
+    chart(row, () => {
+      const xs = pfm.pairs.map((p) => p.x), ys = pfm.pairs.map((p) => p.y);
+      return [[{ type: "scatter", mode: "markers", name: "пары с одинаковым составом", x: xs, y: ys,
+        marker: { color: partColor("test"), size: 8, line: { width: 1, color: css("--bg") } },
+        text: pfm.pairs.map((p) => `${p.a} vs ${p.b}<br>N ${p.N}<br>${p.x.toFixed(3)} s vs ${p.y.toFixed(3)} s`), hovertemplate: "%{text}<extra></extra>" },
+        identityLine(xs, ys)], baseLayout("Шум: одинаковая работа в разных прогонах", "T в одном прогоне, s", "T в другом прогоне, s")];
+    });
+  }
+
   // 5. Decode steps for methods with step predictions.
   const stepMethods = D.methods.filter((m) => m.has_step_predictions);
   const dc = D.decode_sample.filter((r) => r.source === train?.id);
   stepMethods.forEach((m, i) => {
-    s = section("06" + (stepMethods.length > 1 ? String.fromCharCode(97 + i) : ""), `Decode-шаги: ${m.name}`,
+    s = section("07" + (stepMethods.length > 1 ? String.fromCharCode(97 + i) : ""), `Decode-шаги: ${m.name}`,
       `Слева — случайная выборка до 4000 шагов; в центре и справа — медиана и межквартильный размах \\(e\\) по всем шагам в зависимости от \\(\\sum\\ell\\) и \\(B\\).`);
     row = chartRow(s);
     const pk = "pred__" + m.name, ek = "rel_err__" + m.name;
@@ -384,7 +427,7 @@ function renderReport() {
   });
 
   // 6. Error against SM clock.
-  s = section("07", "Ошибка от частоты SM", "Частота шага — среднее по GPU прогона в ближайшей выборке телеметрии (раз в ~1 с). Модели частоту не используют.");
+  s = section("08", "Ошибка от частоты SM", "Частота шага — среднее по GPU прогона в ближайшей выборке телеметрии (раз в ~1 с). Модели частоту не используют.");
   row = chartRow(s);
   chart(row, () => [scatterByPart(pf, "sm_clock_mhz", "rel_err", "part", pfHover), baseLayout("Prefill-шаги", "частота SM, МГц", "ошибка", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка" } } })]);
   stepMethods.forEach((m) => chart(row, () => [binnedTraces(((D.decode_binned[m.name] || {}).sm_clock_mhz || []).filter((b) => b.source === train?.id), (p) => partColor(p), (p) => PART_LABEL[p] ?? p),
@@ -399,7 +442,7 @@ function renderReport() {
   // 7. Transfer sources.
   const transfers = (D.sources || []).filter((x) => x.role === "transfer");
   transfers.forEach((src, i) => {
-    s = section("08" + (transfers.length > 1 ? String.fromCharCode(97 + i) : ""), `Перенос: ${src.label}`,
+    s = section("09" + (transfers.length > 1 ? String.fromCharCode(97 + i) : ""), `Перенос: ${src.label}`,
       `Коэффициенты и кривые — от ${train?.label}, без подгонки. ${src.runs} прогон(ов), ${src.prefill_steps} prefill- и ${src.decode_steps} decode-шагов.`);
     table(s, D.runs.filter((r) => r.source === src.id), [
       { label: "прогон", key: "run_id", text: true }, { label: "способ", key: "method", text: true },
@@ -421,7 +464,7 @@ function renderReport() {
   });
 
   // 8. Coverage.
-  s = section("09", "Покрытие данных", "Диапазоны признаков по каждой модели; гистограммы нормированы, чтобы сравнивать формы распределений.");
+  s = section("10", "Покрытие данных", "Диапазоны признаков по каждой модели; гистограммы нормированы, чтобы сравнивать формы распределений.");
   table(s, D.coverage, [
     { label: "данные", value: (r) => sourceLabel(r.source), text: true }, { label: "признак", value: (r) => texVar(r.variable), text: true },
     { label: "min", key: "min", fmt: (v) => num(v, 4) }, { label: "p05", key: "p05", fmt: (v) => num(v, 4) },
@@ -437,7 +480,7 @@ function renderReport() {
   })), baseLayout(subLabel(v), subLabel(v), "доля", { barmode: "overlay", yaxis: { ...baseLayout().yaxis, tickformat: ".0%", title: { text: "доля" } } })]));
 
   // 9. Notes.
-  s = section("10", "Что посчитать нельзя или с оговорками");
+  s = section("11", "Что посчитать нельзя или с оговорками");
   s.append(el("ul", { class: "notes" }, ...(D.notes || []).map((n) => el("li", {}, n))));
 }
 
