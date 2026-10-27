@@ -346,7 +346,16 @@ MODEL_PROPERTIES["field_status"] = _status_map()
 WORKLOAD = _object(
     {
         "workload_id": ID,
-        "workload_name": {"enum": ["S", "L", "M", "prefix_sweep", *[f"prefix_sweep_set_{i:02d}" for i in range(1, 7)]]},
+        "workload_name": {
+            "enum": [
+                "S",
+                "L",
+                "M",
+                "prefix_sweep",
+                "qwen3_8b_long_context",
+                *[f"prefix_sweep_set_{i:02d}" for i in range(1, 7)],
+            ]
+        },
         "seed": NONNEG_INT,
         "requests": {
             "type": "array",
@@ -496,9 +505,7 @@ REQUEST = _stamped(
         "input_token_count": NONNEG_INT,
         "prefix_reused_tokens": _nullable(NONNEG_INT),
         "cache_hit_tokens": _nullable(NONNEG_INT),
-        "cache_hit_ratio": _nullable(
-            {"type": "number", "minimum": 0, "maximum": 1}
-        ),
+        "cache_hit_ratio": _nullable({"type": "number", "minimum": 0, "maximum": 1}),
         "prefix_family_id": _nullable(STR),
         "prefix_group_id": _nullable(STR),
         "prefix_token_count": NONNEG_INT,

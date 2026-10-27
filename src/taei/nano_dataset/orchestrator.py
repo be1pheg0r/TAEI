@@ -11,7 +11,13 @@ from typing import Any
 
 from .metadata import collect_environment, collect_hardware, collect_model
 from .schema import DATASET_SCHEMA, FIELD_DICTIONARY, SCHEMA_VERSION
-from .workload import WORKLOAD_SETS, build_run_matrix, build_workload
+from .workload import (
+    LONG_CONTEXT_SETS,
+    WORKLOAD_SETS,
+    build_long_context_plan,
+    build_run_matrix,
+    build_workload,
+)
 
 COLLECTOR_VERSION = "0.3.0"
 TRACE_TABLES = (
@@ -56,7 +62,45 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             )
 
 
-def build_plan(order_seed: int = 20261023) -> dict[str, Any]:
+def build_plan(
+    order_seed: int = 20261023,
+    *,
+    workload_protocol: str = "six_set_paired_prefix_sweep_v1",
+    context_cap: int = 32768,
+    max_num_seqs: int = 8,
+    max_num_batched_tokens: int = 16384,
+) -> dict[str, Any]:
+    if workload_protocol == "qwen3_8b_long_context_32k_v1":
+        plan = build_long_context_plan(
+            context_cap=context_cap,
+            order_seed=order_seed,
+            max_num_seqs=max_num_seqs,
+            max_num_batched_tokens=max_num_batched_tokens,
+        )
+        prompt_total = output_total = 0
+        workload_summaries: dict[str, dict[str, Any]] = {}
+        for run in plan["matrix"]:
+            workload = build_workload(run["workload_id"], run["seed"])
+            workload_summaries[workload["workload_id"]] = workload["summary"]
+            prompt_total += workload["summary"]["logical_prompt_tokens"]
+            output_total += workload["summary"]["requested_output_token_total"]
+        plan.update(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "condition_count": len({row["condition_id"] for row in plan["matrix"]}),
+                "workload_sets": list(LONG_CONTEXT_SETS),
+                "workload_summaries": workload_summaries,
+                "seed_count": 2,
+                "seeds": [42, 43],
+                "treatments_per_set_seed": 4,
+                "logical_prompt_tokens": prompt_total,
+                "requested_output_tokens": output_total,
+                "validation_status": "disabled",
+            }
+        )
+        return plan
+    if workload_protocol != "six_set_paired_prefix_sweep_v1":
+        raise ValueError(f"unsupported workload protocol: {workload_protocol}")
     matrix = build_run_matrix(order_seed)
     prompt_total = output_total = request_total = 0
     workload_summaries: dict[str, dict[str, Any]] = {}
@@ -75,7 +119,10 @@ def build_plan(order_seed: int = 20261023) -> dict[str, Any]:
             "source_updated_at": "2026-10-23T13:24:06.215Z",
             "mapping_version": "six_workload_sets_v1",
             "source_snapshot_sha256": None,
-            "source_snapshot_note": "historical source reference; active protocol is six independent workload sets",
+            "source_snapshot_note": (
+                "historical source reference; active protocol is six independent "
+                "workload sets"
+            ),
         },
         "matrix": matrix,
         "run_count": len(matrix),
@@ -103,16 +150,37 @@ def build_plan(order_seed: int = 20261023) -> dict[str, Any]:
         },
         "scheduler_policy": {
             "max_num_seqs": 8,
-            "dynamic_max_num_seqs_semantics": "per-schedule selected batch cap; upstream running set may exceed 8",
+            "dynamic_max_num_seqs_semantics": (
+                "per-schedule selected batch cap; upstream running set may exceed 8"
+            ),
             "fixed_batch": "admit waves <=8 without replacement until wave completes",
         },
         "timing_policy": {
-            "window": "synchronize; host monotonic around one engine.generate call; synchronize",
-            "includes": ["scheduler", "model execution", "sampling", "tokenizer decode"],
-            "excludes": ["model loading", "warmup", "prefix donor priming", "workload tokenization", "artifact disk flush"],
-            "gpu_per_token_timestamps": "unsupported unless measured by engine instrumentation",
+            "window": (
+                "synchronize; host monotonic around one engine.generate call; "
+                "synchronize"
+            ),
+            "includes": [
+                "scheduler",
+                "model execution",
+                "sampling",
+                "tokenizer decode",
+            ],
+            "excludes": [
+                "model loading",
+                "warmup",
+                "prefix donor priming",
+                "workload tokenization",
+                "artifact disk flush",
+            ],
+            "gpu_per_token_timestamps": (
+                "unsupported unless measured by engine instrumentation"
+            ),
         },
-        "split_policy": "pair_id groups four treatments per workload/seed; split_group_id keeps all treatments and both seeds of a workload set together",
+        "split_policy": (
+            "pair_id groups four treatments per workload/seed; split_group_id keeps "
+            "all treatments and both seeds of a workload set together"
+        ),
     }
 
 
