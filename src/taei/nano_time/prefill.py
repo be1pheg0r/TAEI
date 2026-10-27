@@ -16,11 +16,8 @@ from .fit import fit_nonneg
 
 FEATURES = ("new", "quad")
 LATEX = [
-    r"\hat T^{\,\mathrm{prefill}}_{\mathrm{step}} = a \sum_{i \in \mathrm{step}} "
-    r"L_i (1 - R_i) + b \sum_{i \in \mathrm{step}} L_i^2 (1 - R_i^2) + c, "
-    r"\qquad a, b, c \ge 0",
-    r"\hat T_{\mathrm{prefill}} = \sum_{s \in \mathrm{prefill}} "
-    r"\hat T^{\,\mathrm{prefill}}_{s}",
+    r"T_{\mathrm{pf}} = a \sum_{i \in \mathrm{step}} L_i (1 - R_i) + "
+    r"b \sum_{i \in \mathrm{step}} L_i^2 (1 - R_i^2) + c, \qquad a, b, c \ge 0",
 ]
 
 

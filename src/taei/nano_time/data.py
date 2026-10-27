@@ -1,18 +1,30 @@
-"""Загружает успешные прогоны nano-vLLM и строит таблицы прогонов и шагов.
+"""Загружает успешные прогоны nano-vLLM и строит таблицы прогонов, шагов и запросов.
 
-Для каждого прогона читаются ``runs.json``, ``environment.json``,
-``steps.jsonl``, ``step_requests.jsonl`` и ``telemetry.jsonl``. Время шага —
-полное, ``step_host_end_ns - step_host_start_ns`` (часы хоста). Для запроса в
-prefill-шаге C — токены из кэша до шага, L = C + новые токены (длина запроса в
-KV после шага; совпадает с ``context_tokens_before``, а ``context_tokens_after``
-на единицу больше из-за сэмплированного токена). Для decode-шага берётся
-текущая длина контекста ℓ каждого запроса и число запросов B. Частота SM шага —
-среднее по видимым GPU прогона в ближайшей по времени выборке телеметрии.
+Для каждого прогона читаются ``runs.json``, ``steps.jsonl``,
+``step_requests.jsonl``, ``requests.jsonl`` и ``token_events.jsonl``. Время
+шага — полное, ``step_host_end_ns - step_host_start_ns`` (часы хоста).
+
+Для запроса в prefill-шаге C — токены, чей KV уже есть до шага
+(``private_kv_cached_tokens``, то есть ``num_cached_tokens`` последовательности):
+чужой префикс из кэша (``prefix_reused_tokens`` входит сюда, он не больше C) и
+свой предыдущий кусок chunked prefill; N — токены, посчитанные в шаге: новые
+(``fresh_prefill_tokens``) и пересчитанные после вытеснения
+(``recompute_tokens``); L = C + N — длина запроса в KV после шага. У последнего
+куска (шаг выдаёт токен) L совпадает с ``context_tokens_before``, у
+промежуточного — меньше. Для decode-шага берётся текущая длина контекста ℓ
+каждого запроса и число запросов B.
+
+I — все токены промптов прогона, включая кэш (``input_tokens``), O — фактически
+выданные токены. В fixed_batch сборщик может потерять вытесненный запрос: тогда
+O меньше запрошенного, разница — ``lost_tokens``; шаги трассы при этом верны.
+Состояние машины за прогон (медианы частоты SM, загрузки и мощности видимых GPU
+из ``telemetry.jsonl``, число KV-блоков) идёт только в примечания отчёта.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,6 +38,7 @@ class Dataset:
     prefill_steps: pd.DataFrame  # one row per prefill step
     prefill_requests: pd.DataFrame  # one row per (prefill step, request)
     decode_steps: pd.DataFrame  # one row per decode step
+    requests: pd.DataFrame  # one row per request: timestamps, O, first/last step
 
 
 def _jsonl(path: Path) -> list[dict]:
@@ -33,44 +46,70 @@ def _jsonl(path: Path) -> list[dict]:
         return [json.loads(line) for line in stream if line.strip()]
 
 
-def _telemetry(path: Path, visible: set[str]) -> pd.DataFrame:
-    rows = []
-    for sample in _jsonl(path):
-        gpus = [g for g in sample.get("gpu_devices") or [] if g.get("uuid") in visible]
-        clocks = [g["sm_clock_mhz"] for g in gpus if g.get("sm_clock_mhz") is not None]
-        if not clocks:
-            continue
-        rows.append(
-            {
-                "t_ns": sample["monotonic_ns"],
-                "sm_clock_mhz": float(np.mean(clocks)),
-                "temperature_c": float(np.mean([g["temperature_c"] for g in gpus])),
-                "power_w": float(np.mean([g["power_w"] for g in gpus])),
-            }
-        )
-    return pd.DataFrame(rows).sort_values("t_ns").reset_index(drop=True)
-
-
-def _nearest(tel: pd.DataFrame, t_ns: np.ndarray, column: str) -> np.ndarray:
-    if tel.empty:
-        return np.full(len(t_ns), np.nan)
-    times = tel["t_ns"].to_numpy()
-    idx = np.searchsorted(times, t_ns)
-    left = np.clip(idx - 1, 0, len(times) - 1)
-    right = np.clip(idx, 0, len(times) - 1)
-    pick = np.where(
-        np.abs(times[left] - t_ns) <= np.abs(times[right] - t_ns), left, right
+def _prefill_requests(rows: list[dict], run_id: str) -> pd.DataFrame:
+    reqs = pd.DataFrame([r for r in rows if r["relation"] == "prefill"])
+    reqs["C"] = reqs["private_kv_cached_tokens"].astype(float)
+    reqs["N"] = (reqs["fresh_prefill_tokens"] + reqs["recompute_tokens"]).astype(float)
+    reqs["L"] = reqs["C"] + reqs["N"]
+    last = reqs["produced_tokens"] > 0
+    bad = (
+        (last & (reqs["L"] != reqs["context_tokens_before"]))
+        | (~last & (reqs["L"] >= reqs["context_tokens_before"]))
+        | (reqs["prefix_reused_tokens"] > reqs["C"])
     )
-    return tel[column].to_numpy()[pick]
+    if bad.any():
+        raise ValueError(
+            f"{run_id}: L inconsistent with context_tokens_before in {bad.sum()} rows"
+        )
+    reqs["R"] = reqs["C"] / reqs["L"]
+    reqs["new"] = reqs["N"]  # L(1 - R)
+    reqs["quad"] = reqs["L"] ** 2 - reqs["C"] ** 2  # L^2 (1 - R^2)
+    return reqs[["step_id", "request_id", "L", "C", "R", "new", "quad"]]
+
+
+def _gpu_state(attempt: Path) -> dict[str, float]:
+    """Run medians of SM clock, utilization and power over the run's visible GPUs."""
+    env = json.loads((attempt / "environment.json").read_text())
+    visible = set(str(env.get("cuda_visible_devices", "")).split(","))
+    gpus = [
+        g
+        for sample in _jsonl(attempt / "telemetry.jsonl")
+        for g in sample.get("gpu_devices") or []
+        if g.get("uuid") in visible
+    ]
+    median = lambda key: float(np.median([g[key] for g in gpus])) if gpus else np.nan  # noqa: E731
+    return {
+        "gpu_sm_mhz": median("sm_clock_mhz"),
+        "gpu_util": median("utilization_gpu_percent"),
+        "gpu_power_w": median("power_w"),
+    }
+
+
+def _requests(attempt: Path, step_index: dict[str, int]) -> pd.DataFrame:
+    tokens = pd.DataFrame(_jsonl(attempt / "token_events.jsonl"))
+    tokens["step_index"] = tokens["step_id"].map(step_index)
+    span = tokens.groupby("request_id")["step_index"].agg(
+        first_step="min", last_step="max"
+    )
+    rows = [
+        {
+            "request_id": q["request_id"],
+            "prompt": q["prompt_length"],
+            "O": q["actual_output_tokens"],
+            "O_requested": q["requested_output_tokens"],
+            "finish_reason": q["finish_reason"],
+            "enqueue_ns": q["enqueue_monotonic_ns"],
+            "first_ns": q["first_host_observed_monotonic_ns"],
+            "finish_ns": q["finish_monotonic_ns"],
+        }
+        for q in _jsonl(attempt / "requests.jsonl")
+    ]
+    return pd.DataFrame(rows).merge(span.reset_index(), on="request_id", how="left")
 
 
 def load_run(attempt: Path, model: str) -> dict[str, pd.DataFrame | dict]:
     run = json.loads((attempt / "runs.json").read_text())
-    env = json.loads((attempt / "environment.json").read_text())
-    visible = set(filter(None, str(env.get("cuda_visible_devices", "")).split(",")))
     run_id = run["run_id"]
-    tel = _telemetry(attempt / "telemetry.jsonl", visible)
-
     steps = pd.DataFrame(
         [
             {
@@ -86,70 +125,84 @@ def load_run(attempt: Path, model: str) -> dict[str, pd.DataFrame | dict]:
         ]
     )
     steps["T"] = (steps["t_end_ns"] - steps["t_start_ns"]) * 1e-9
-    mid = ((steps["t_start_ns"] + steps["t_end_ns"]) // 2).to_numpy()
-    for column in ("sm_clock_mhz", "temperature_c", "power_w"):
-        steps[column] = _nearest(tel, mid, column)
     steps["run_id"] = run_id
     steps["model"] = model
 
-    reqs = pd.DataFrame(
-        [
-            r
-            for r in _jsonl(attempt / "step_requests.jsonl")
-            if r["relation"] == "prefill"
-        ]
-    )
-    reqs["C"] = reqs["prefix_reused_tokens"].astype(float)
-    reqs["L"] = reqs["C"] + reqs["fresh_prefill_tokens"].astype(float)
-    mismatch = (reqs["L"] != reqs["context_tokens_before"]).sum()
-    if mismatch:
-        raise ValueError(f"{run_id}: L != context_tokens_before in {mismatch} rows")
-    reqs["R"] = reqs["C"] / reqs["L"]
-    reqs["new"] = reqs["L"] - reqs["C"]  # L(1 - R)
-    reqs["quad"] = reqs["L"] ** 2 - reqs["C"] ** 2  # L^2 (1 - R^2)
-    reqs = reqs[["step_id", "request_id", "L", "C", "R", "new", "quad"]].assign(
-        run_id=run_id, model=model
-    )
-
+    reqs = _prefill_requests(_jsonl(attempt / "step_requests.jsonl"), run_id)
+    reqs = reqs.assign(run_id=run_id, model=model)
     prefill = steps[steps["phase"] == "prefill"].merge(
         reqs.groupby("step_id")[["new", "quad"]].sum().reset_index(), on="step_id"
     )
     decode = steps[steps["phase"] == "decode"].copy()
+    requests = _requests(
+        attempt, dict(zip(steps["step_id"], steps["step_index"], strict=True))
+    )
+    requests = requests.assign(run_id=run_id, model=model)
 
     metrics = run["metrics"]
-    new_input = metrics["input_tokens"] - metrics["cache_hit_tokens"]  # P
-    output = metrics["output_tokens"]  # O
     row = {
         "run_id": run_id,
         "model": model,
         "set_id": run["set_id"],
         "seed": run["seed"],
         "condition_id": run["condition_id"],
+        "workload": re.sub(r"-seed-\d+$", "", run["workload_id"]),
         "cache": run["prefix_cache_mode"],
         "scheduler": run["scheduler_mode"],
         "wall_seconds": metrics["wall_seconds"],
-        "P": new_input,
-        "O": output,
-        "p_decode": output / (new_input + output),
+        "I": metrics["input_tokens"],
+        "O": metrics["output_tokens"],
+        "O_requested": metrics["requested_output_tokens"],
+        "lost_tokens": metrics["requested_output_tokens"] - metrics["output_tokens"],
         "steps_seconds": float(steps["T"].sum()),
         "prefill_seconds": float(prefill["T"].sum()),
         "decode_seconds": float(decode["T"].sum()),
         "n_prefill_steps": len(prefill),
         "n_decode_steps": len(decode),
-        # Run-level L and R over its prefilled requests (R = sum C / sum L).
-        "L_mean": float(reqs["L"].mean()),
+        # Run-level L and R over its prefill rows (R = sum C / sum L).
+        "L_mean": float(requests["prompt"].mean()),
         "R_run": float(reqs["C"].sum() / reqs["L"].sum()),
-        "sm_clock_mhz_median": float(np.median(tel["sm_clock_mhz"]))
-        if len(tel)
-        else np.nan,
+        # Machine state, for notes only: the model does not use it.
+        "kv_blocks": (
+            (run.get("effective_config") or {}).get("effective_config") or {}
+        ).get("num_kvcache_blocks"),
+        **_gpu_state(attempt),
     }
-    return {"run": row, "prefill": prefill, "requests": reqs, "decode": decode}
+    return {
+        "run": row,
+        "prefill": prefill,
+        "requests": reqs,
+        "decode": decode,
+        "request_table": requests,
+    }
+
+
+def attempts(root: Path | str) -> pd.DataFrame:
+    """Status, cache mode and error type of every attempt under ``root``."""
+    rows = []
+    for runs_json in sorted(Path(root).glob("*/*/runs.json")):
+        info = json.loads(runs_json.read_text())
+        rows.append(
+            {
+                "run_id": info["run_id"],
+                "status": info.get("status"),
+                "cache": info.get("prefix_cache_mode"),
+                "error": (info.get("error") or {}).get("type"),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def load(root: Path | str, model: str, run_ids: list[str] | None = None) -> Dataset:
     """Load successful runs under ``root`` (a ``runs/`` folder of one launch)."""
-    parts: dict[str, list] = {"run": [], "prefill": [], "requests": [], "decode": []}
-    for runs_json in sorted(Path(root).glob("R*/*/runs.json")):
+    parts: dict[str, list] = {
+        "run": [],
+        "prefill": [],
+        "requests": [],
+        "decode": [],
+        "request_table": [],
+    }
+    for runs_json in sorted(Path(root).glob("*/*/runs.json")):
         info = json.loads(runs_json.read_text())
         if info.get("status") != "success":
             continue
@@ -165,4 +218,5 @@ def load(root: Path | str, model: str, run_ids: list[str] | None = None) -> Data
         prefill_steps=pd.concat(parts["prefill"], ignore_index=True),
         prefill_requests=pd.concat(parts["requests"], ignore_index=True),
         decode_steps=pd.concat(parts["decode"], ignore_index=True),
+        requests=pd.concat(parts["request_table"], ignore_index=True),
     )

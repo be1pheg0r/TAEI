@@ -5,10 +5,9 @@ import pandas as pd
 import pytest
 
 from taei.nano_time import data as nano_data
-from taei.nano_time import split
-from taei.nano_time.decode import registry, select
-from taei.nano_time.decode.additive import Additive
-from taei.nano_time.decode.multiplicative import interpolate, k_points
+from taei.nano_time import prices, split
+from taei.nano_time.decode import DecodeModel
+from taei.nano_time.evaluate import TRAIN_SOURCE, evaluate
 from taei.nano_time.fit import fit_nonneg
 from taei.nano_time.prefill import PrefillModel
 
@@ -44,21 +43,12 @@ def test_prefill_prediction_nonnegative_and_monotone():
     )
 
 
-def test_additive_decode_step_monotone_in_sum_l_and_batch():
-    method = Additive()
-    method.coef = {"d0": 0.05, "d1": 1e-7, "d2": 1e-3}
+def test_decode_step_monotone_in_sum_l_and_batch():
+    method = DecodeModel(coef={"d0": 0.05, "d1": 1e-7, "d2": 1e-3})
     base = pd.DataFrame({"sum_l": [1000.0, 2000.0, 2000.0], "B": [2, 2, 4]})
     pred = method.predict_steps(base)
     assert np.all(pred > 0)
     assert pred[1] >= pred[0] and pred[2] >= pred[1]
-
-
-def test_k_interpolation_merges_equal_p_and_clamps():
-    points = k_points(pd.Series([0.1, 0.1, 0.2, 0.3]), pd.Series([2.0, 4.0, 5.0, 7.0]))
-    assert points["p"].tolist() == [0.1, 0.2, 0.3]
-    assert points["k"].tolist() == [3.0, 5.0, 7.0]  # median of 2 and 4
-    k = interpolate(points, [0.05, 0.15, 0.3, 0.9])
-    assert k.tolist() == pytest.approx([3.0, 4.0, 7.0, 7.0])
 
 
 def _runs():
@@ -82,70 +72,118 @@ def test_stratified_split_deterministic_disjoint_balanced():
     assert (tagged.groupby(["set_id", "cache"])["train"].sum() == 2).all()
 
 
-def test_cache_split():
+def test_cache_split_and_none_without_cached_runs():
     sp = split.cache_off_on(_runs())
     assert all("off" in r for r in sp["train"]) and all("on" in r for r in sp["test"])
+    assert split.cache_off_on(_runs().assign(cache="off")) is None
 
 
-def test_registry_finds_both_methods():
-    assert {"additive", "multiplicative"} <= set(registry())
-    assert set(select("both")) == set(registry())
-    with pytest.raises(ValueError):
-        select("unknown")
+def test_stratified_split_by_custom_keys():
+    runs = _runs()
+    runs["workload"] = np.where(runs["run_id"].str[-1].isin(["0", "1"]), "P", "L")
+    keys = ["set_id", "cache", "workload"]
+    sp = split.stratified(runs, 0, keys)
+    tagged = runs.assign(train=runs["run_id"].isin(sp["train"]))
+    assert (tagged.groupby(keys)["train"].sum() == 1).all()
+    # The default keys keep the old split.
+    assert split.stratified(runs, 0) == split.stratified(runs, 0, ["set_id", "cache"])
 
 
-def _write_run(tmp_path, fresh=314, cached=512, before=826):
-    attempt = tmp_path / "R01" / "uuid"
+def _write_run(tmp_path, rows=None, run_id="R01"):
+    """One run; prefill rows: fresh, recompute, private, reused, before, produced."""
+    rows = rows or [(314, 0, 512, 512, 826, 1)]
+    attempt = tmp_path / run_id / "uuid"
     attempt.mkdir(parents=True)
+    input_tokens = sum(r[4] for r in rows if r[5])
     (attempt / "runs.json").write_text(
         json.dumps(
             {
-                "run_id": "R01",
+                "run_id": run_id,
                 "status": "success",
                 "set_id": "s",
                 "seed": 1,
                 "condition_id": "C01",
+                "workload_id": "s-seed-1",
                 "prefix_cache_mode": "on",
                 "scheduler_mode": "x",
                 "metrics": {
                     "wall_seconds": 1.0,
-                    "input_tokens": before,
-                    "cache_hit_tokens": cached,
+                    "input_tokens": input_tokens,
+                    "cache_hit_tokens": 0,
                     "output_tokens": 1,
+                    "requested_output_tokens": 1,
                 },
             }
         )
     )
+    steps, reqs = [], []
+    for i, (fresh, recompute, private, reused, before, produced) in enumerate(rows):
+        steps.append(
+            {
+                "step_id": f"step-{i}",
+                "step_index": i + 1,
+                "phase": "prefill",
+                "step_host_start_ns": i * 10**9,
+                "step_host_end_ns": i * 10**9 + 500_000_000,
+                "actual_batch_size": 1,
+                "contexts_before": {"q": before},
+            }
+        )
+        reqs.append(
+            {
+                "step_id": f"step-{i}",
+                "request_id": "q",
+                "relation": "prefill",
+                "fresh_prefill_tokens": fresh,
+                "recompute_tokens": recompute,
+                "private_kv_cached_tokens": private,
+                "prefix_reused_tokens": reused,
+                "context_tokens_before": before,
+                "produced_tokens": produced,
+            }
+        )
+    write = lambda name, items: (attempt / name).write_text(  # noqa: E731
+        "".join(json.dumps(x) + "\n" for x in items)
+    )
     (attempt / "environment.json").write_text(
         json.dumps({"cuda_visible_devices": "G0"})
     )
-    step = {
-        "step_id": "step-1",
-        "step_index": 1,
-        "phase": "prefill",
-        "step_host_start_ns": 0,
-        "step_host_end_ns": 500_000_000,
-        "actual_batch_size": 1,
-        "contexts_before": {"q": before},
-    }
-    (attempt / "steps.jsonl").write_text(json.dumps(step) + "\n")
-    req = {
-        "step_id": "step-1",
-        "request_id": "q",
-        "relation": "prefill",
-        "prefix_reused_tokens": cached,
-        "fresh_prefill_tokens": fresh,
-        "context_tokens_before": before,
-    }
-    (attempt / "step_requests.jsonl").write_text(json.dumps(req) + "\n")
-    tel = {
-        "monotonic_ns": 0,
-        "gpu_devices": [
-            {"uuid": "G0", "sm_clock_mhz": 1500, "temperature_c": 80, "power_w": 100},
-            {"uuid": "other", "sm_clock_mhz": 900, "temperature_c": 50, "power_w": 50},
+    gpus = [
+        {
+            "uuid": "G0",
+            "sm_clock_mhz": 1500,
+            "utilization_gpu_percent": 80,
+            "power_w": 100,
+        },
+        {
+            "uuid": "other",
+            "sm_clock_mhz": 900,
+            "utilization_gpu_percent": 0,
+            "power_w": 50,
+        },
+    ]
+    write("telemetry.jsonl", [{"monotonic_ns": 0, "gpu_devices": gpus}])
+    write("steps.jsonl", steps)
+    write("step_requests.jsonl", reqs)
+    write(
+        "requests.jsonl",
+        [
+            {
+                "request_id": "q",
+                "prompt_length": input_tokens,
+                "actual_output_tokens": 1,
+                "requested_output_tokens": 1,
+                "finish_reason": "length",
+                "enqueue_monotonic_ns": 0,
+                "first_host_observed_monotonic_ns": len(rows) * 10**9,
+                "finish_monotonic_ns": len(rows) * 10**9,
+            }
         ],
-    }
-    (attempt / "telemetry.jsonl").write_text(json.dumps(tel) + "\n")
+    )
+    write(
+        "token_events.jsonl",
+        [{"request_id": "q", "step_id": f"step-{len(rows) - 1}", "token_index": 0}],
+    )
     return tmp_path
 
 
@@ -154,20 +192,34 @@ def test_loader_features_and_l_equals_context(tmp_path):
     req = ds.prefill_requests.iloc[0]
     assert req["L"] == 826 and req["C"] == 512
     assert req["new"] == 314 and req["quad"] == 826**2 - 512**2
-    step = ds.prefill_steps.iloc[0]
-    assert step["T"] == pytest.approx(0.5)
-    assert step["sm_clock_mhz"] == 1500  # only the run's visible GPU
-    assert ds.runs.iloc[0]["p_decode"] == pytest.approx(1 / (314 + 1))
+    assert ds.prefill_steps.iloc[0]["T"] == pytest.approx(0.5)
+    run = ds.runs.iloc[0]
+    assert run["I"] == 826 and run["O"] == 1 and run["lost_tokens"] == 0
+    assert ds.requests.iloc[0]["first_step"] == 1
+    assert run["gpu_sm_mhz"] == 1500  # only the run's visible GPU
+
+
+def test_loader_reads_chunked_prefill_and_recompute(tmp_path):
+    # Two chunks of a 19457-token prompt, then a recompute of 16129 tokens.
+    rows = [
+        (16384, 0, 0, 0, 19457, 0),
+        (3073, 0, 16384, 0, 19457, 1),
+        (0, 16129, 0, 0, 16129, 1),
+    ]
+    reqs = nano_data.load(_write_run(tmp_path, rows), "toy").prefill_requests
+    assert reqs["L"].tolist() == [16384, 19457, 16129]
+    assert reqs["C"].tolist() == [0, 16384, 0]
+    assert reqs["new"].tolist() == [16384, 3073, 16129]
 
 
 def test_loader_rejects_inconsistent_l(tmp_path):
     with pytest.raises(ValueError):
-        nano_data.load(_write_run(tmp_path, before=900), "toy")
+        nano_data.load(_write_run(tmp_path, [(314, 0, 512, 512, 900, 1)]), "toy")
 
 
 def _synthetic_dataset(model="toy", n_sets=2, scale=1.0) -> nano_data.Dataset:
     rng = np.random.default_rng(1)
-    runs, pf, reqs, dc = [], [], [], []
+    runs, pf, reqs, dc, rq = [], [], [], [], []
     for s in range(n_sets):
         for cache in ("on", "off"):
             for rep in range(2):
@@ -183,11 +235,11 @@ def _synthetic_dataset(model="toy", n_sets=2, scale=1.0) -> nano_data.Dataset:
                     {
                         "run_id": run_id,
                         "step_id": "s1",
+                        "step_index": 1,
                         "new": new,
                         "quad": prompt**2 - cached**2,
                         "T": t_pf,
                         "B": 1,
-                        "sm_clock_mhz": 1600.0,
                         "model": model,
                     }
                 )
@@ -209,13 +261,30 @@ def _synthetic_dataset(model="toy", n_sets=2, scale=1.0) -> nano_data.Dataset:
                         {
                             "run_id": run_id,
                             "step_id": [f"d{i}" for i in range(steps_dc)],
+                            "step_index": np.arange(steps_dc) + 2,
                             "B": 1,
                             "sum_l": sum_l,
                             "T": t_dc,
-                            "sm_clock_mhz": 1600.0,
                             "model": model,
                         }
                     )
+                )
+                first_ns = int(t_pf * 1e9)
+                rq.append(
+                    {
+                        "run_id": run_id,
+                        "request_id": "q",
+                        "prompt": prompt,
+                        "O": steps_dc + 1,
+                        "O_requested": steps_dc + 1,
+                        "finish_reason": "length",
+                        "enqueue_ns": 0,
+                        "first_ns": first_ns,
+                        "finish_ns": first_ns + int(t_dc.sum() * 1e9),
+                        "first_step": 1,
+                        "last_step": steps_dc + 1,
+                        "model": model,
+                    }
                 )
                 runs.append(
                     {
@@ -224,18 +293,21 @@ def _synthetic_dataset(model="toy", n_sets=2, scale=1.0) -> nano_data.Dataset:
                         "set_id": f"set{s}",
                         "seed": rep,
                         "condition_id": "C",
+                        "workload": f"set{s}",
                         "cache": cache,
                         "scheduler": "x",
                         "wall_seconds": t_pf + t_dc.sum(),
-                        "P": new,
-                        "O": steps_dc,
-                        "p_decode": steps_dc / (new + steps_dc),
+                        "I": prompt,
+                        "O": steps_dc + 1,
+                        "O_requested": steps_dc + 1,
+                        "lost_tokens": 0,
                         "steps_seconds": t_pf + t_dc.sum(),
                         "prefill_seconds": t_pf,
                         "decode_seconds": t_dc.sum(),
                         "n_prefill_steps": 1,
                         "n_decode_steps": steps_dc,
-                        "sm_clock_mhz_median": 1600.0,
+                        "L_mean": prompt,
+                        "R_run": cached / prompt,
                     }
                 )
     return nano_data.Dataset(
@@ -243,62 +315,103 @@ def _synthetic_dataset(model="toy", n_sets=2, scale=1.0) -> nano_data.Dataset:
         pd.DataFrame(pf),
         pd.DataFrame(reqs),
         pd.concat(dc, ignore_index=True),
+        pd.DataFrame(rq),
     )
+
+
+def _evaluation():
+    train = _synthetic_dataset()
+    other = _synthetic_dataset("big", n_sets=1, scale=3.0)
+    return evaluate(train, {"big model": other}, "regression", 0, {})
 
 
 def _document():
     from taei.nano_time import report_data
-    from taei.nano_time.evaluate import TRAIN_SOURCE, evaluate
 
-    train = _synthetic_dataset()
-    other = _synthetic_dataset("big", n_sets=1, scale=3.0)
-    ev = evaluate(train, {"big model": other}, select("both"), "regression", 0, {})
-    meta = {
-        "meta": {"fit": "regression", "decode": "both", "seed": 0},
-        "labels": {TRAIN_SOURCE: "toy"},
-    }
-    return report_data.build(ev, meta, ["note"])
+    ev = _evaluation()
+    meta = {"fit": "regression", "seed": 0}
+    model = report_data.build(ev, "toy", meta, ["note"])
+    return report_data.document(meta, [model, model])
+
+
+def test_token_prices_add_up_to_predicted_total():
+    ev = _evaluation()
+    p = prices.run_prices(ev).merge(ev.runs[["source", "run_id", "pred"]])
+    total = (p["a_model"] * p["I"] + p["b_model"] * p["O"]).to_numpy()
+    assert total == pytest.approx(p["pred"].to_numpy())
+    budget = (p["pred"] / p["wall_seconds"]).to_numpy()
+    assert p["budget_model"].to_numpy() == pytest.approx(budget)
+    # Synthetic wall is the sum of steps, so the measured budget is exactly 1.
+    assert p["budget_meas"].to_numpy() == pytest.approx(np.ones(len(p)))
+    lines = prices.lines(ev)
+    by_r = [line["itps_max"] for line in lines["by_R"]]
+    assert by_r == sorted(by_r)  # more reuse -> cheaper input tokens
+
+
+def test_request_ttft_and_tpot_follow_the_trace():
+    ev = _evaluation()
+    reqs = prices.requests(ev)
+    pf = ev.prefill_steps.set_index(["source", "run_id"])["pred"]
+    dc = ev.decode_steps.groupby(["source", "run_id"])["pred"].sum()
+    key = list(zip(reqs["source"], reqs["run_id"], strict=True))
+    assert reqs["ttft_hat"].to_numpy() == pytest.approx(pf.reindex(key).to_numpy())
+    tpot = dc.reindex(key).to_numpy() / (reqs["O"] - 1).to_numpy()
+    assert reqs["tpot_hat"].to_numpy() == pytest.approx(tpot)
+    assert reqs["ttft"].to_numpy() == pytest.approx(
+        ev.prefill_steps.set_index(["source", "run_id"])["T"].reindex(key).to_numpy(),
+        rel=1e-6,
+    )
 
 
 def test_report_document_is_json_and_generic():
     from taei.nano_time import report_data
 
     doc = _document()
-    text = json.dumps(doc, allow_nan=False)  # no NaN or numpy values left
-    assert doc["schema_version"] == report_data.SCHEMA_VERSION
-    assert {m["name"] for m in doc["methods"]} == {"additive", "multiplicative"}
-    assert [s["role"] for s in doc["sources"]] == ["train", "transfer"]
-    assert {p["a"] for p in doc["paired"]} | {p["b"] for p in doc["paired"]} == {
-        "additive",
-        "multiplicative",
-    }
-    assert doc["curves"] and doc["decode_binned"]["additive"]["B"]
-    forms = doc["prefill_forms"]
+    json.dumps(doc, allow_nan=False)  # no NaN or numpy values left
+    assert doc["schema_version"] == report_data.SCHEMA_VERSION == 2
+    model = doc["models"][0]
+    assert [s["role"] for s in model["sources"]] == ["train", "transfer"]
+    assert len(model["math"]["formulas"]) == 6 and len(model["pipeline"]) == 6
+    assert {"by_R", "by_B", "ref"} <= set(model["prices"]["lines"])
+    assert model["decode_binned"]["B"] and "sm_clock_mhz" not in model["decode_binned"]
+    forms = model["prefill_forms"]
     assert forms["table"] and all(r["set_cv_mean"] >= 0 for r in forms["table"])
-    assert all(
-        v >= 0 for r in forms["table"] for k, v in r["coef"].items() if k != "alpha"
-    )
-    assert "big model" in text or any(s["id"] == "big model" for s in doc["sources"])
-    for row in doc["metrics"]:
+    total = [r for r in model["metrics"] if r["what"] == "T_total per run"]
+    assert total and all("mean_signed" in r for r in total)
+    for row in model["metrics"]:
         assert row["mean_abs"] >= 0
 
 
-def test_render_report_embeds_data_safely(tmp_path):
+def test_render_report_embeds_data_safely_and_index_reads_v1_and_v2(tmp_path):
     from taei.nano_time import report
 
     doc = _document()
-    doc["notes"] = ["</script><b>x</b>"]
+    doc["models"][0]["notes"] = ["</script><b>x</b>"]
     page = report.render_report(doc)
     assert "__REPORT_DATA__" not in page and "</script><b>" not in page
     assert page.count("<title>") == 1
     with pytest.raises(ValueError):
-        report.render_report({**doc, "schema_version": 0})
+        report.render_report({**doc, "schema_version": 1})
     run = tmp_path / "20260101_000000"
     run.mkdir()
     (run / "time_model.json").write_text(json.dumps(doc), encoding="utf-8")
     report.write_report(run / "time_model.json")
+    old = tmp_path / "20250101_000000"
+    old.mkdir()
+    v1 = {
+        "schema_version": 1,
+        "meta": {"fit": "regression", "decode": "both"},
+        "sources": [{"id": TRAIN_SOURCE, "label": "toy", "role": "train"}],
+        "metrics": [
+            {"what": "multiplicative: T_total per run", "part": "test", "mean_abs": 0.2}
+        ],
+    }
+    (old / "time_model.json").write_text(json.dumps(v1), encoding="utf-8")
     index = report.write_index(tmp_path).read_text(encoding="utf-8")
     assert "20260101_000000/report.html" in index
+    assert "20250101_000000/report.html" in index
+    entry = report.index_entry(old / "time_model.json", tmp_path)
+    assert entry["models"][0]["test"] == {"multiplicative": 0.2}
 
 
 def test_run_factor_fit_recovers_shape_and_factors():

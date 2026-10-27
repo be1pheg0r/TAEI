@@ -3,7 +3,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-/* Layout: one reading column of numbered report sections; charts full column width. */
+/* Layout: one reading column of numbered report sections; charts full column width; a model switcher on top. */
 :root {
   --bg: #fcfcfb; --surface: #f4f4f1; --fg: #1d1d1b; --muted: #5f5e58; --line: #dedcd5;
   --grid: #e9e7e1; --accent: #2a5f9e;
@@ -29,7 +29,7 @@
   --grid: #2b2a27; --accent: #7fb0ec;
   --part-train: #3987e5; --part-test: #d95926; --part-transfer: #199e70;
   --m1: #9085e9; --m2: #008300; --m3: #d55181; --m4: #e66767;
-    --div-neg: #3987e5; --div-mid: #383835; --div-pos: #e66767;
+  --div-neg: #3987e5; --div-mid: #383835; --div-pos: #e66767;
   --good: #5cbf7a; --bad: #f08a80; color-scheme: dark;
 }
 body {
@@ -44,18 +44,23 @@ h2 { font-size: 1.25rem; font-weight: 600; margin: 0; text-wrap: balance; displa
 h2 .num { font-family: var(--font-mono); font-size: 0.85rem; color: var(--muted); }
 h3 { font-size: 1rem; font-weight: 600; margin: 8px 0 0; }
 p { margin: 0; max-width: 72ch; }
+header { display: grid; gap: 12px; }
 .meta { font-family: var(--font-mono); font-size: 0.8rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.switch { display: flex; flex-wrap: wrap; gap: 6px; }
+.switch button { font: 500 0.9rem var(--font-body); color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 7px 14px; cursor: pointer; }
+.switch button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--bg); }
 section { display: grid; gap: 14px; min-width: 0; }
 .lede { color: var(--muted); }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
-.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; display: grid; gap: 2px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; display: grid; gap: 2px; align-content: start; }
 .tile .label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 .tile .value { font-family: var(--font-mono); font-size: 1.5rem; font-variant-numeric: tabular-nums; }
 .tile .sub { font-size: 0.8rem; color: var(--muted); }
-.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: baseline; }
 .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
 .chart { min-width: 0; height: 360px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+.chart.tall { height: 440px; }
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; }
+.table-wrap.scroll { max-height: 420px; overflow-y: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
 th, td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
 th { background: var(--surface); font-weight: 600; position: sticky; top: 0; }
@@ -65,12 +70,21 @@ td.mono, .mono { font-family: var(--font-mono); font-size: 0.8rem; }
 tr:last-child td { border-bottom: 0; }
 .math { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
 .math mjx-container[display="true"] { margin: 0.4em 0 !important; }
-.formula { font-family: var(--font-mono); font-size: 0.82rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; overflow-x: auto; }
+.formulas { display: grid; gap: 18px; }
+.formula-block { display: grid; gap: 4px; min-width: 0; }
+ol.pipeline { margin: 0; padding: 0; list-style: none; counter-reset: p; display: grid; gap: 16px; }
+ol.pipeline > li { counter-increment: p; display: grid; grid-template-columns: 32px 1fr; gap: 4px 10px; min-width: 0; }
+ol.pipeline > li::before { content: counter(p); font: 600 0.95rem/1.5 var(--font-mono); color: var(--accent); grid-row: span 3; }
+ol.pipeline .facts { display: grid; gap: 2px; font-size: 0.9rem; min-width: 0; }
+ol.pipeline .facts > span { display: block; }
+.tag { font: 500 0.7rem var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; padding: 1px 6px; border-radius: 4px; margin-right: 6px; }
+.tag.have { color: var(--good); border: 1px solid var(--good); }
+.tag.miss { color: var(--bad); border: 1px solid var(--bad); }
 ul.notes { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 80ch; }
 a { color: var(--accent); }
 a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .neg { color: var(--bad); } .pos { color: var(--good); }
-@media (max-width: 520px) { .chart { height: 300px; } h1 { font-size: 1.5rem; } }
+@media (max-width: 520px) { .chart { height: 300px; } .chart.tall { height: 360px; } h1 { font-size: 1.5rem; } }
 </style>
 
 <main id="app"></main>
@@ -79,12 +93,15 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
 <script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.0/plotly.min.js"></script>
 <script>
 "use strict";
-const D = JSON.parse(document.getElementById("report-data").textContent);
+const DOC = JSON.parse(document.getElementById("report-data").textContent);
+let D = {};
 const app = document.getElementById("app");
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-const PART_LABEL = { train: "train", test: "test", transfer: "transfer" };
+const PART_LABEL = { train: "train", test: "test", transfer: "перенос" };
 const pct = (v, digits = 1) => (v == null ? "—" : (v * 100).toFixed(digits) + "%");
+const signed = (v) => (v == null ? "—" : (v > 0 ? "+" : "") + pct(v) + (v > 0 ? " перебор" : v < 0 ? " недобор" : ""));
 const num = (v, digits = 4) => (v == null ? "—" : Number.isInteger(v) ? String(v) : Math.abs(v) >= 1e4 || (Math.abs(v) < 1e-3 && v !== 0) ? v.toExponential(3) : (+v).toPrecision(digits));
+const int = (v) => (v == null ? "—" : Math.round(v).toLocaleString("ru-RU"));
 // TeX for numbers and coefficient names: 1.19e-4 -> 1.19 \\times 10^{-4}, d0 -> d_{0}.
 const texNum = (v) => {
   if (v == null) return "\\text{—}";
@@ -101,9 +118,8 @@ const texName = (k) => {
   const [head, ...rest] = k.split("_");
   return rest.length ? `${head}_{\\mathrm{${rest.join("\\,")}}}` : head;
 };
-const TEX_VAR = { "L": "L", "R": "R", "B": "B", "Σℓ": "\\sum\\ell", "p_decode": "p_{\\mathrm{decode}}" };
+const TEX_VAR = { "L": "L", "R": "R", "B": "B", "Σℓ": "\\sum\\ell", "O": "O" };
 const texVar = (name) => (TEX_VAR[name] ? `\\(${TEX_VAR[name]}\\)` : name);
-// Plotly axis labels take HTML: p_decode -> p<sub>decode</sub>.
 const subLabel = (text) => String(text).replace(/([A-Za-zΣℓ̂]+)_([A-Za-z]+)/g, "$1<sub>$2</sub>");
 const el = (tag, attrs = {}, ...children) => {
   const node = document.createElement(tag);
@@ -114,17 +130,24 @@ const el = (tag, attrs = {}, ...children) => {
   return node;
 };
 const sourceLabel = (id) => (D.sources || []).find((s) => s.id === id)?.label ?? id;
-const methodNames = (D.methods || []).map((m) => m.name);
-const methodColor = (name) => css(["--m1", "--m2", "--m3", "--m4"][Math.max(0, methodNames.indexOf(name)) % 4]);
 const partColor = (part) => css("--part-" + part) || css("--muted");
+const schedColor = (s) => css(String(s).startsWith("fixed") ? "--m2" : "--m1");
+const cacheColor = (c) => css(c === "on" ? "--m3" : "--m1");
+const schedSymbol = (s) => (String(s).startsWith("fixed") ? "diamond" : "circle");
+const coefText = (c) => {
+  const parts = Object.entries(c || {}).map(([k, v]) => `${texName(k)} = ${typeof v === "number" ? texNum(v) : `\\text{${v}}`}`);
+  return parts.length ? `\\(${parts.join(",\\ ")}\\)` : "—";
+};
 
-function section(num, title, lede) {
-  const s = el("section", {}, el("h2", {}, el("span", { class: "num" }, num), title));
+let sectionNo = 0;
+function section(title, lede) {
+  sectionNo += 1;
+  const s = el("section", {}, el("h2", {}, el("span", { class: "num" }, String(sectionNo).padStart(2, "0")), title));
   if (lede) s.append(el("p", { class: "lede" }, lede));
   app.append(s);
   return s;
 }
-function table(parent, rows, columns) {
+function table(parent, rows, columns, scroll = false) {
   const head = el("tr", {}, ...columns.map((c) => el("th", { class: c.text ? "text" : "" }, c.label)));
   const body = rows.map((r) => el("tr", {}, ...columns.map((c) => {
     const v = c.value ? c.value(r) : r[c.key];
@@ -132,11 +155,11 @@ function table(parent, rows, columns) {
     if (v instanceof Node) cell.append(v); else cell.textContent = c.fmt ? c.fmt(v, r) : (v ?? "—");
     return cell;
   })));
-  parent.append(el("div", { class: "table-wrap" }, el("table", {}, el("thead", {}, head), el("tbody", {}, ...body))));
+  parent.append(el("div", { class: "table-wrap" + (scroll ? " scroll" : "") }, el("table", {}, el("thead", {}, head), el("tbody", {}, ...body))));
 }
-const charts = [];
-function chart(parent, build) {
-  const box = el("div", { class: "chart" });
+let charts = [];
+function chart(parent, build, tall = false) {
+  const box = el("div", { class: "chart" + (tall ? " tall" : "") });
   parent.append(box);
   charts.push({ box, build });
   return box;
@@ -155,204 +178,207 @@ function baseLayout(title, xTitle, yTitle, extra = {}) {
     xaxis: axis(xTitle), yaxis: axis(yTitle),
   }, extra);
 }
+const errLayout = (title, xTitle, yTitle = "ошибка") => baseLayout(title, xTitle, yTitle, { yaxis: { ...baseLayout().yaxis, tickformat: ".0%", title: { text: yTitle } } });
 function identityLine(xs, ys) {
   const all = xs.concat(ys).filter((v) => v != null);
   const lo = Math.min(...all), hi = Math.max(...all);
   return { x: [lo, hi], y: [lo, hi], mode: "lines", name: "y = x", line: { color: css("--muted"), dash: "dash", width: 1 }, hoverinfo: "skip" };
 }
-function scatterByPart(rows, x, y, partKey, hover) {
-  const parts = [...new Set(rows.map((r) => r[partKey]))];
+function scatterByPart(rows, x, y, hover) {
+  const parts = [...new Set(rows.map((r) => r.part))];
   return parts.map((p) => {
-    const sub = rows.filter((r) => r[partKey] === p);
-    return { x: sub.map((r) => r[x]), y: sub.map((r) => r[y]), mode: "markers", type: "scatter", name: PART_LABEL[p] ?? p,
-      marker: { color: partColor(p), size: 8, opacity: 0.75, line: { width: 1, color: css("--bg") } },
+    const sub = rows.filter((r) => r.part === p);
+    return { x: sub.map((r) => r[x]), y: sub.map((r) => r[y]), mode: "markers", type: "scattergl", name: PART_LABEL[p] ?? p,
+      marker: { color: partColor(p), size: 7, opacity: 0.7, line: { width: 1, color: css("--bg") } },
       text: sub.map(hover), hovertemplate: "%{text}<extra></extra>" };
   });
 }
-function binnedTraces(bins, colorOf, nameOf) {
+function binnedTraces(bins) {
   const groups = {};
   for (const b of bins) (groups[b.source + "|" + b.part] ||= []).push(b);
   const traces = [];
   for (const [key, list] of Object.entries(groups)) {
     const [source, part] = key.split("|");
     list.sort((a, b) => a.x - b.x);
-    const color = colorOf(part, source);
+    const color = partColor(part);
+    const name = (PART_LABEL[part] ?? part) + (part === "transfer" ? `: ${sourceLabel(source)}` : "");
     traces.push({ x: list.map((b) => b.x).concat(list.map((b) => b.x).reverse()), y: list.map((b) => b.q75).concat(list.map((b) => b.q25).reverse()),
       fill: "toself", fillcolor: color, opacity: 0.15, line: { width: 0 }, hoverinfo: "skip", showlegend: false, type: "scatter" });
-    traces.push({ x: list.map((b) => b.x), y: list.map((b) => b.median), mode: "lines+markers", type: "scatter", name: nameOf(part, source),
+    traces.push({ x: list.map((b) => b.x), y: list.map((b) => b.median), mode: "lines+markers", type: "scatter", name,
       line: { color, width: 2 }, marker: { color, size: 8 },
       customdata: list.map((b) => [b.q25, b.q75, b.n]),
-      hovertemplate: "x %{x:.4g}<br>median %{y:.1%}<br>IQR %{customdata[0]:.1%} … %{customdata[1]:.1%}<br>n %{customdata[2]}<extra></extra>" });
+      hovertemplate: "x %{x:.4g}<br>медиана %{y:.1%}<br>IQR %{customdata[0]:.1%} … %{customdata[1]:.1%}<br>n %{customdata[2]}<extra></extra>" });
   }
   return traces;
 }
-const errAxis = { tickformat: ".0%" };
+const metric = (what, part, source) => (D.metrics || []).find((r) => r.what === what && r.part === part && (!source || r.source === source));
 
-function renderReport() {
-  const meta = D.meta || {};
-  const train = (D.sources || []).find((s) => s.role === "train");
-  app.append(el("header", {}, el("h1", {}, "Модель времени nano-vLLM"),
-    el("div", { class: "meta" }, ...[
-      `создан ${meta.created_utc ?? "—"}`, `коммит ${(meta.git_commit || "").slice(0, 7)}`, `fit=${meta.fit}`,
-      `decode=${meta.decode}`, `seed=${meta.seed}`, `формат v${D.schema_version}`,
-    ].map((t) => el("span", {}, t)))));
-
-  // Headline tiles: test error per method, transfer error per method and source.
-  const tiles = el("div", { class: "tiles" });
-  for (const m of methodNames) {
-    const row = D.metrics.find((r) => r.what === `${m}: T_total per run` && r.part === "test");
-    if (row) tiles.append(el("div", { class: "tile" },
-      el("span", { class: "label" }, el("span", { class: "swatch", style: `background:${methodColor(m)}` }), m),
-      el("span", { class: "value" }, pct(row.mean_abs)),
-      el("span", { class: "sub" }, `средняя \\(|e|\\) для \\(\\hat T_{\\mathrm{total}}\\), test, ${row.n} прогонов`)));
+// ITPS–OTPS: model lines a·ITPS + b·OTPS = 1 for one family, run points and per-run lines.
+function budgetChart(family, title, varying) {
+  const P = D.prices, runs = P.runs.filter((r) => r.part !== "unused");
+  const lines = P.lines[family];
+  const dashes = ["solid", "dash", "dot", "dashdot"];
+  const traces = lines.map((l, i) => ({
+    type: "scatter", mode: "lines", name: l.label, x: [0, l.itps_max], y: [l.otps_max, 0],
+    line: { color: css("--fg"), width: 1.5, dash: dashes[i % 4] },
+    hovertemplate: `${l.label}<br>1/ã = %{customdata[0]:,.0f} ток/с<br>1/b̃ = %{customdata[1]:,.1f} ток/с<extra></extra>`,
+    customdata: [[l.itps_max, l.otps_max], [l.itps_max, l.otps_max]],
+  }));
+  // Label the end that varies across the family once per line, the shared end once.
+  const ann = [];
+  const label = (x, y, text, ax, ay) => ann.push({ x, y, text, showarrow: true, arrowhead: 0, arrowwidth: 1, arrowcolor: css("--muted"), ax, ay, font: { size: 10, color: css("--muted") } });
+  lines.forEach((l, i) => {
+    if (varying === "itps") label(l.itps_max, 0, `1/ã ${int(l.itps_max)}`, 0, -22 - 14 * i);
+    else label(0, l.otps_max, `1/b̃ ${num(l.otps_max, 3)}`, 40 + 10 * i, 0);
+  });
+  if (varying === "itps") label(0, lines[0].otps_max, `1/b̃ ${num(lines[0].otps_max, 3)}`, 46, 0);
+  else label(lines[0].itps_max, 0, `1/ã ${int(lines[0].itps_max)}`, 0, -26);
+  const own = runs.filter((r) => r.a_model > 0 && r.b_model > 0);
+  traces.push({ type: "scatter", mode: "lines", name: "прямые прогонов", visible: "legendonly",
+    x: own.flatMap((r) => [0, 1 / r.a_model, null]), y: own.flatMap((r) => [1 / r.b_model, 0, null]),
+    line: { color: css("--muted"), width: 1 }, opacity: 0.5, hoverinfo: "skip" });
+  for (const cache of ["off", "on"]) for (const sched of [...new Set(runs.map((r) => r.scheduler))]) {
+    const sub = runs.filter((r) => r.cache === cache && r.scheduler === sched);
+    if (!sub.length) continue;
+    traces.push({ type: "scatter", mode: "markers", name: `кэш ${cache} · ${sched}`, x: sub.map((r) => r.ITPS), y: sub.map((r) => r.OTPS),
+      marker: { color: cacheColor(cache), symbol: schedSymbol(sched), size: 9, line: { width: 1, color: css("--bg") } },
+      text: sub.map((r) => `${r.run_id} · ${sourceLabel(r.source)} (${PART_LABEL[r.part] ?? r.part})<br>ITPS ${int(r.ITPS)}, OTPS ${num(r.OTPS, 3)}<br>ã·ITPS + b̃·OTPS: модель ${num(r.budget_model, 3)}, замер ${num(r.budget_meas, 3)}`),
+      hovertemplate: "%{text}<extra></extra>" });
   }
-  for (const s of (D.sources || []).filter((x) => x.role === "transfer")) {
-    for (const m of methodNames) {
-      const row = D.metrics.find((r) => r.what === `${m}: T_total per run` && r.source === s.id);
-      if (row) tiles.append(el("div", { class: "tile" },
-        el("span", { class: "label" }, `${s.label} · ${m}`),
-        el("span", { class: "value" }, (row.mean_signed > 0 ? "+" : "") + pct(row.mean_signed)),
-        el("span", { class: "sub" }, `\\(e\\) со знаком, без подгонки`)));
-    }
+  const xmax = Math.max(...lines.map((l) => l.itps_max), ...runs.map((r) => r.ITPS)) * 1.05;
+  const ymax = Math.max(...lines.map((l) => l.otps_max), ...runs.map((r) => r.OTPS)) * 1.08;
+  return [traces, baseLayout(title, "ITPS = I / T, входных ток/с", "OTPS = O / T, выходных ток/с",
+    { annotations: ann, xaxis: { ...baseLayout().xaxis, range: [0, xmax], title: { text: "ITPS = I / T, входных ток/с" } }, yaxis: { ...baseLayout().yaxis, range: [0, ymax], title: { text: "OTPS = O / T, выходных ток/с" } } })];
+}
+
+function renderModel() {
+  charts = [];
+  sectionNo = 0;
+  const meta = DOC.meta || {};
+  const train = (D.sources || []).find((s) => s.role === "train");
+  const transfers = (D.sources || []).filter((x) => x.role === "transfer");
+  const coef = { ...D.prefill_model.coef, ...D.decode_model.coef };
+
+  const tiles = el("div", { class: "tiles" });
+  const tile = (label, value, sub) => tiles.append(el("div", { class: "tile" }, el("span", { class: "label" }, label), el("span", { class: "value" }, value), el("span", { class: "sub" }, sub)));
+  const tt = metric("T_total per run", "test");
+  if (tt) tile("T_total, test", pct(tt.mean_abs), `средняя \\(|e|\\), ${tt.n} прогонов; средний знак ${signed(tt.mean_signed)}`);
+  const ps = metric("prefill step", "test"), ds = metric("decode step", "test");
+  if (ps) tile("prefill-шаг, test", pct(ps.mean_abs), `средняя \\(|e|\\), ${ps.n} шагов`);
+  if (ds) tile("decode-шаг, test", pct(ds.mean_abs), `средняя \\(|e|\\), ${ds.n} шагов`);
+  for (const s of transfers) {
+    const row = metric("T_total per run", "transfer", s.id);
+    if (row) tile(`перенос: ${s.label}`, (row.mean_signed > 0 ? "+" : "") + pct(row.mean_signed), "\\(e\\) со знаком, без подгонки");
   }
   app.append(tiles);
-  const intro = el("p", { class: "lede" },
-    `Подбор на ${train?.label ?? "—"}: ${train?.runs ?? "—"} прогонов, ${train?.prefill_steps ?? "—"} prefill- и ${train?.decode_steps ?? "—"} decode-шагов; ` +
-    `train ${D.split.train.length} / test ${D.split.test.length} прогонов. Ошибка — относительная, \\(e = (\\hat T - T)/T\\).`);
-  app.append(intro);
+  app.append(el("p", { class: "lede" },
+    `Подбор на ${train?.label ?? "—"}: ${train?.runs ?? "—"} прогонов, ${int(train?.prefill_steps)} prefill- и ${int(train?.decode_steps)} decode-шагов; ` +
+    `train ${D.split.train.length} / test ${D.split.test.length} прогонов, fit = ${meta.fit}. Ошибка — относительная, \\(e = (\\hat T - T)/T\\).`));
 
-  // 1. Model description (TeX from the data: notation, model A, methods, fit, error).
-  let s = section("01", "Модели",
-    "Короткое математическое описание: обозначения, модель prefill, способы decode, функция потерь подбора и метрика ошибки.");
+  // 1. Project pipeline.
+  let s = section("Пайплайн проекта", "Что считается на каждом шаге и что для этого есть в данных этой модели.");
+  s.append(el("ol", { class: "pipeline" }, ...D.pipeline.map((p) => el("li", {},
+    el("strong", {}, p.title), el("span", {}, p.text),
+    el("div", { class: "facts" },
+      ...p.have.map((t) => el("span", {}, el("span", { class: "tag have" }, "есть"), t)),
+      ...p.missing.map((t) => el("span", {}, el("span", { class: "tag miss" }, "нет"), t)))))));
+
+  // 2. Model.
+  s = section("Модель", "Обозначения, формулы и коэффициенты этой модели.");
   const math = D.math || {};
-  if ((math.notation || []).length) {
-    table(s, math.notation.map(([tex, text]) => ({ tex, text })), [
-      { label: "обозначение", value: (r) => `\\(${r.tex}\\)`, text: true },
-      { label: "смысл", key: "text", text: true },
-    ]);
-  }
-  const equations = (title, summary, latex, fallback) => {
-    s.append(el("h3", {}, title));
-    if (summary) s.append(el("p", {}, summary));
-    if ((latex || []).length) latex.forEach((eq) => s.append(el("div", { class: "math" }, `\\[${eq}\\]`)));
-    else if (fallback) s.append(el("div", { class: "formula" }, fallback));
-  };
-  equations("Модель A — prefill-шаг", "Время prefill-шага растёт с новыми токенами запросов шага (линейная часть) и с квадратичной частью внимания; токены из кэша не считаются заново.",
-    D.prefill_model.latex, D.prefill_model.formula);
-  for (const m of D.methods) equations(`Decode: ${m.name}`, m.summary, m.latex, m.formula);
-  if (math.fit) equations(`Подбор коэффициентов (fit = ${math.fit_method})`, "Коэффициенты подбираются на train-прогонах; \\(\\theta\\) — коэффициенты модели или способа.", [math.fit]);
-  if (math.error) equations("Ошибка", "Во всех таблицах и графиках — относительная ошибка; минус значит недобор.", [math.error]);
+  table(s, math.notation.map(([tex, text]) => ({ tex, text })), [
+    { label: "обозначение", value: (r) => `\\(${r.tex}\\)`, text: true },
+    { label: "смысл", key: "text", text: true },
+  ]);
+  const forms = el("div", { class: "formulas" });
+  const block = (title, text, latex) => forms.append(el("div", { class: "formula-block" },
+    el("h3", {}, title), text ? el("p", {}, text) : null, ...latex.map((eq) => el("div", { class: "math" }, `\\[${eq}\\]`))));
+  math.formulas.forEach((f, i) => block(`${i + 1}. ${f.title}`, f.text, f.latex));
+  block(`${math.formulas.length + 1}. Ошибка и подбор (fit = ${math.fit_method})`, "Коэффициенты \\(\\theta\\) подбираются на train-прогонах; минус в \\(e\\) — недобор.", [math.error, math.fit].filter(Boolean));
+  s.append(forms);
+  s.append(el("p", {}, `Коэффициенты: ${coefText(coef)}`));
 
-  // 2. Metrics.
-  s = section("02", "Ошибки и коэффициенты",
-    "Средняя, медиана и максимум — по модулю \\(|e|\\); «со знаком» — среднее \\(e\\) (минус значит недобор). Строки строятся по всем способам и моделям из данных.");
-  const coefText = (c) => {
-    const parts = Object.entries(c || {}).map(([k, v]) => `${texName(k)} = ${typeof v === "number" ? texNum(v) : `\\text{${v}}`}`);
-    return parts.length ? `\\(${parts.join(",\\ ")}\\)` : "—";
-  };
+  // 3. Final charts.
+  const L = D.prices.lines.ref;
+  s = section("Итоговые графики",
+    `Прямые \\(\\tilde a \\cdot \\mathrm{ITPS} + \\tilde b \\cdot \\mathrm{OTPS} = 1\\) — по модели для запроса медианной длины \\(L = ${int(L.L)}\\), ` +
+    `decode-шага с медианным \\(B = ${num(L.B, 2)}\\) и медианной \\(\\bar\\ell = ${int(L.ell)}\\). Точки — реальные прогоны: \\(\\mathrm{ITPS} = I / T^{\\mathrm{wall}}\\), \\(\\mathrm{OTPS} = O / T^{\\mathrm{wall}}\\); цвет — кэш, форма — планировщик. ` +
+    "Прямые прогонов (по их взвешенным \\(\\tilde a,\\ \\tilde b\\)) включаются в легенде.");
+  let row = chartRow(s);
+  chart(row, () => budgetChart("by_R", "ITPS–OTPS: семейство по R", "itps"), true);
+  chart(row, () => budgetChart("by_B", "ITPS–OTPS: семейство по B (R = 0)", "otps"), true);
+  s.append(el("p", { class: "lede" }, "Бюджет по модели \\(\\tilde a \\cdot \\mathrm{ITPS} + \\tilde b \\cdot \\mathrm{OTPS} = \\hat T_{\\mathrm{total}} / T^{\\mathrm{wall}} = 1 + e\\); по замеру — \\(\\sum T_s / T^{\\mathrm{wall}}\\), доля времени, когда GPU считает шаги."));
+  table(s, D.prices.runs.filter((r) => r.part !== "unused"), [
+    { label: "прогон", key: "run_id", text: true, mono: true }, { label: "данные", value: (r) => sourceLabel(r.source), text: true },
+    { label: "часть", value: (r) => PART_LABEL[r.part] ?? r.part }, { label: "кэш", key: "cache" }, { label: "планировщик", key: "scheduler", text: true },
+    { label: "ITPS", key: "ITPS", fmt: int }, { label: "OTPS", key: "OTPS", fmt: (v) => num(v, 3) },
+    { label: "ã модель, с/ток", key: "a_model", fmt: (v) => num(v, 3) }, { label: "b̃ модель, с/ток", key: "b_model", fmt: (v) => num(v, 3) },
+    { label: "бюджет: модель", key: "budget_model", fmt: (v) => num(v, 4) }, { label: "бюджет: замер", key: "budget_meas", fmt: (v) => num(v, 4) },
+  ], true);
+  s.append(el("h3", {}, "TTPS–TTFT по запросам"));
+  s.append(el("p", { class: "lede" }, "Замер: \\(\\mathrm{TTFT}\\) = первый токен − постановка в очередь, \\(\\mathrm{TPOT} = (\\text{конец} - \\text{первый токен}) / (O - 1)\\), \\(\\mathrm{TTPS} = 1/\\mathrm{TPOT}\\). " +
+    "Модель: TTFT — сумма предсказанных шагов до шага первого токена, TPOT — предсказанные шаги после первого токена до последнего, делённые на \\(O - 1\\) (без чужих prefill-шагов это \\(1 / T_{\\mathrm{dc}}\\) при \\(B\\) из трассы). " +
+    "Ожидание взято из трассы, а не предсказано: модель очереди ещё не построена. Запросы с \\(O = 1\\) дают только TTFT."));
+  row = chartRow(s);
+  chart(row, () => {
+    const reqs = D.requests.filter((r) => r.part !== "unused" && r.ttps != null);
+    const traces = [];
+    for (const sched of [...new Set(reqs.map((r) => r.scheduler))]) {
+      const sub = reqs.filter((r) => r.scheduler === sched);
+      const hover = sub.map((r) => `${r.run_id} ${r.request_id.split("-").slice(-2).join("-")}<br>L ${r.prompt}, O ${r.O}<br>замер: TTFT ${num(r.ttft, 3)} с, TTPS ${num(r.ttps, 3)}<br>модель: TTFT ${num(r.ttft_hat, 3)} с, TTPS ${num(r.ttps_hat, 3)}`);
+      traces.push({ type: "scattergl", mode: "markers", name: `замер · ${sched}`, x: sub.map((r) => r.ttft), y: sub.map((r) => r.ttps), text: hover, hovertemplate: "%{text}<extra></extra>",
+        marker: { color: schedColor(sched), size: 7, opacity: 0.75, line: { width: 1, color: css("--bg") } } });
+      traces.push({ type: "scattergl", mode: "markers", name: `модель · ${sched}`, x: sub.map((r) => r.ttft_hat), y: sub.map((r) => r.ttps_hat), text: hover, hovertemplate: "%{text}<extra></extra>",
+        marker: { color: schedColor(sched), size: 9, symbol: "circle-open", line: { width: 1.5, color: schedColor(sched) } } });
+    }
+    return [traces, baseLayout("TTPS–TTFT", "TTFT, с (ожидание из трассы)", "TTPS = 1 / TPOT, ток/с")];
+  }, true);
+  if ((D.request_metrics || []).length) table(s, D.request_metrics, [
+    { label: "метрика", value: (r) => r.what.toUpperCase() }, { label: "данные", value: (r) => sourceLabel(r.source), text: true },
+    { label: "часть", value: (r) => PART_LABEL[r.part] ?? r.part }, { label: "запросов", key: "n" },
+    { label: "средняя |e|", key: "mean_abs", fmt: (v) => pct(v) }, { label: "медиана |e|", key: "median_abs", fmt: (v) => pct(v) },
+    { label: "максимум |e|", key: "max_abs", fmt: (v) => pct(v) }, { label: "средний знак", key: "mean_signed", fmt: signed },
+  ]);
+
+  // 4. Metrics.
+  s = section("Ошибки и коэффициенты",
+    "Средняя, медиана и максимум — по модулю \\(|e|\\); средний знак — среднее \\(e\\): плюс — перебор (переоценка), минус — недобор.");
   table(s, D.metrics, [
     { label: "что", key: "what", text: true },
     { label: "данные", value: (r) => sourceLabel(r.source), text: true },
-    { label: "часть", key: "part" },
+    { label: "часть", value: (r) => PART_LABEL[r.part] ?? r.part },
     { label: "n", key: "n" },
     { label: "средняя", key: "mean_abs", fmt: (v) => pct(v) },
     { label: "медиана", key: "median_abs", fmt: (v) => pct(v) },
     { label: "максимум", key: "max_abs", fmt: (v) => pct(v) },
-    { label: "со знаком", key: "mean_signed", fmt: (v) => pct(v) },
+    { label: "средний знак", key: "mean_signed", fmt: signed },
     { label: "коэффициенты", value: (r) => coefText(r.coef), text: true },
   ]);
+  if (D.prefill_model.cache_split_coef) s.append(el("p", { class: "lede" }, `Модель A, подобранная только на прогонах без кэша: ${coefText(D.prefill_model.cache_split_coef)}.`));
 
-  // 2. Method comparison on the same test runs.
-  const testRuns = D.runs.filter((r) => r.part === "test");
-  s = section("03", "Способы на одних test-прогонах",
-    "Слева — \\(|e|\\) каждого test-прогона по способам; справа — \\(\\hat T_{\\mathrm{total}}\\) против \\(T^{\\mathrm{wall}}\\), пунктир — \\(y = x\\).");
-  let row = chartRow(s);
-  chart(row, () => {
-    const ids = [...new Set(testRuns.map((r) => r.run_id))].sort();
-    return [methodNames.map((m) => {
-      const sub = new Map(testRuns.filter((r) => r.method === m).map((r) => [r.run_id, r]));
-      return { type: "bar", name: m, x: ids, y: ids.map((i) => Math.abs(sub.get(i)?.rel_err ?? NaN)),
-        marker: { color: methodColor(m), line: { width: 0 } },
-        customdata: ids.map((i) => [sub.get(i)?.scheduler, sub.get(i)?.cache, sub.get(i)?.rel_err]),
-        hovertemplate: "%{x} · " + m + "<br>|ошибка| %{y:.1%} (со знаком %{customdata[2]:.1%})<br>%{customdata[0]}, кэш %{customdata[1]}<extra></extra>" };
-    }), baseLayout("|ошибка| T_total по прогонам", "test-прогон", "|ошибка|", { barmode: "group", bargap: 0.25, bargroupgap: 0.08, yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "|ошибка|" } } })];
-  });
-  chart(row, () => {
-    const traces = methodNames.map((m) => {
-      const sub = testRuns.filter((r) => r.method === m);
-      return { type: "scatter", mode: "markers", name: m, x: sub.map((r) => r.wall_seconds), y: sub.map((r) => r.pred),
-        marker: { color: methodColor(m), size: 9, line: { width: 1, color: css("--bg") } },
-        text: sub.map((r) => `${r.run_id} · ${m}<br>wall ${r.wall_seconds.toFixed(1)} s, T̂ ${r.pred.toFixed(1)} s<br>ошибка ${pct(r.rel_err)}`),
-        hovertemplate: "%{text}<extra></extra>" };
-    });
-    traces.push(identityLine(testRuns.map((r) => r.wall_seconds), testRuns.map((r) => r.pred)));
-    return [traces, baseLayout("Предсказание против wall", "T<sup>wall</sup>, s", "T̂<sub>total</sub>, s")];
-  });
-  if ((D.paired || []).length) {
-    s.append(el("h3", {}, "Ошибка \\(\\hat T_{\\mathrm{total}}\\) от \\(\\bar L\\) и \\(R\\) прогона"));
-    s.append(el("p", { class: "lede" }, "Test-прогоны: \\(\\bar L\\) — средняя длина запроса прогона, \\(R = \\sum C / \\sum L\\) по его запросам (у прогонов без кэша \\(R = 0\\))."));
-    const lrRow = chartRow(s);
-    const runScatter = (x, title, xTitle) => chart(lrRow, () => [methodNames.map((m) => {
-      const sub = testRuns.filter((r) => r.method === m);
-      return { type: "scatter", mode: "markers", name: m, x: sub.map((r) => r[x]), y: sub.map((r) => r.rel_err),
-        marker: { color: methodColor(m), size: 9, line: { width: 1, color: css("--bg") } },
-        text: sub.map((r) => `${r.run_id} · ${m}<br>L̄ ${r.L_mean?.toFixed(0)}, R ${r.R_run?.toFixed(2)}<br>${r.scheduler}, кэш ${r.cache}<br>ошибка ${pct(r.rel_err)}`),
-        hovertemplate: "%{text}<extra></extra>" };
-    }), baseLayout(title, xTitle, "ошибка", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка" } } })]);
-    runScatter("L_mean", "Ошибка T̂<sub>total</sub> от L̄", "средняя L прогона, токены");
-    runScatter("R_run", "Ошибка T̂<sub>total</sub> от R", "R прогона");
-    s.append(el("h3", {}, "Парное сравнение"));
-    table(s, D.paired, [
-      { label: "способ A", key: "a", text: true }, { label: "способ B", key: "b", text: true },
-      { label: "прогонов", key: "n" }, { label: "A точнее в", key: "a_better" },
-      { label: "|ош. B| − |ош. A|", key: "mean_diff", fmt: (v) => pct(v) },
-      { label: "Wilcoxon p", key: "wilcoxon_p", fmt: (v) => num(v, 3) },
-    ]);
-  }
-  s.append(el("h3", {}, "По планировщику и кэшу (|ошибка| на test)"));
-  table(s, D.test_breakdown, [
-    { label: "способ", key: "method", text: true }, { label: "планировщик", key: "scheduler", text: true },
-    { label: "кэш", key: "cache" }, { label: "средняя", key: "mean", fmt: (v) => pct(v) },
-    { label: "медиана", key: "median", fmt: (v) => pct(v) }, { label: "максимум", key: "max", fmt: (v) => pct(v) },
-    { label: "n", key: "count" },
-  ]);
-  const flagged = testRuns.filter((r) => r.flag);
-  if (flagged.length) {
-    s.append(el("p", {}, "Помеченные прогоны:"));
-    table(s, flagged, [{ label: "прогон", key: "run_id", text: true }, { label: "способ", key: "method", text: true }, { label: "\\(p_{\\mathrm{decode}}\\)", key: "p_decode", fmt: (v) => num(v, 3) }, { label: "пометка", key: "flag", text: true }]);
-  }
-
-  // 3. Curves from methods that provide them.
-  if ((D.curves || []).length) {
-    s = section("04", "Кривые способов", "Точки — train-прогоны (одинаковые \\(x\\) объединены медианой), линия — интерполяция, кресты — test-прогоны поверх кривой.");
-    row = chartRow(s);
-    D.curves.forEach((c) => chart(row, () => {
-      const color = methodColor(c.method);
-      return [[
-        { type: "scatter", mode: "lines+markers", name: "train-точки", x: c.points.map((p) => p.x), y: c.points.map((p) => p.y),
-          line: { color, width: 2 }, marker: { color, size: 8 }, hovertemplate: `${c.x_label} %{x:.4f}<br>${c.y_label} %{y:.3g}<extra>train</extra>` },
-        { type: "scatter", mode: "markers", name: "test-прогоны", x: c.overlay.map((p) => p.x), y: c.overlay.map((p) => p.y),
-          marker: { color: partColor("test"), size: 10, symbol: "x-thin", line: { width: 2, color: partColor("test") } },
-          text: c.overlay.map((p) => p.run_id), hovertemplate: `%{text}<br>${c.x_label} %{x:.4f}<br>${c.y_label} %{y:.3g}<extra>test</extra>` },
-      ], baseLayout(`${c.method}: ${subLabel(c.name)}`, subLabel(c.x_label), subLabel(c.y_label))];
-    }));
-  }
-
-  // 4. Prefill (model A) on the train model.
+  // 5. Prediction against measurement.
   const pf = D.prefill_steps.filter((r) => r.source === train?.id);
-  s = section("05", "Prefill: модель A", "По шагам: \\(\\hat T\\) против \\(T\\) и ошибка в зависимости от средней \\(\\bar L\\) шага и \\(R_{\\mathrm{step}} = \\sum C / \\sum L\\).");
+  const dc = D.decode_sample.filter((r) => r.source === train?.id);
+  const runsAll = D.runs.filter((r) => r.part !== "unused");
+  s = section("Предсказание против замера", "Prefill-шаги, decode-шаги (случайная выборка до 4000) и прогоны; пунктир — \\(y = x\\).");
   row = chartRow(s);
   const pfHover = (r) => `${r.run_id} ${r.step_id}<br>T ${r.T.toFixed(3)} s, T̂ ${r.pred.toFixed(3)} s<br>L̄ ${r.L_mean?.toFixed(0)}, R ${r.R_step?.toFixed(2)}<br>ошибка ${pct(r.rel_err)}`;
-  chart(row, () => { const t = scatterByPart(pf, "T", "pred", "part", pfHover); t.push(identityLine(pf.map((r) => r.T), pf.map((r) => r.pred))); return [t, baseLayout("Prefill-шаг", "замер, s", "предсказание, s")]; });
-  chart(row, () => [scatterByPart(pf, "L_mean", "rel_err", "part", pfHover), baseLayout("Ошибка от L", "средняя L шага, токены", "ошибка", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка" } } })]);
-  chart(row, () => [scatterByPart(pf.filter((r) => r.R_step > 0), "R_step", "rel_err", "part", pfHover), baseLayout("Ошибка от R (шаги с кэшем)", "R шага", "ошибка", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка" } } })]);
-  s.append(el("h3", {}, "Зависимость ошибки от \\(\\bar L\\) и \\(R\\)"));
-  s.append(el("p", { class: "lede" }, "Медиана и межквартильный размах \\(e\\) prefill-шага по квантильным корзинам; графики по \\(R\\) — только шаги с кэшем (\\(R > 0\\)); справа — медиана \\(e\\) на сетке \\(\\bar L \\times R_{\\mathrm{step}}\\) (синий — недобор, красный — перебор, в ячейке — число шагов)."));
+  const dcHover = (r) => `${r.run_id}<br>T ${(r.T * 1e3).toFixed(1)} ms, T̂ ${(r.pred * 1e3).toFixed(1)} ms<br>B ${r.B}, Σℓ ${r.sum_l}<br>ошибка ${pct(r.rel_err)}`;
+  chart(row, () => { const t = scatterByPart(pf, "T", "pred", pfHover); t.push(identityLine(pf.map((r) => r.T), pf.map((r) => r.pred))); return [t, baseLayout("Prefill-шаг", "замер, s", "предсказание, s")]; });
+  chart(row, () => { const t = scatterByPart(dc, "T", "pred", dcHover); t.push(identityLine(dc.map((r) => r.T), dc.map((r) => r.pred))); return [t, baseLayout("Decode-шаг", "замер, s", "предсказание, s")]; });
+  chart(row, () => {
+    const t = scatterByPart(runsAll, "wall_seconds", "pred", (r) => `${r.run_id} · ${sourceLabel(r.source)}<br>wall ${r.wall_seconds.toFixed(1)} s, T̂ ${r.pred.toFixed(1)} s<br>${r.scheduler}, кэш ${r.cache}<br>ошибка ${pct(r.rel_err)}`);
+    t.push(identityLine(runsAll.map((r) => r.wall_seconds), runsAll.map((r) => r.pred)));
+    return [t, baseLayout("Прогон: T_total", "T<sup>wall</sup>, s", "T̂<sub>total</sub>, s")];
+  });
+
+  // 6. Error against L, R, Σℓ, B.
+  s = section("Ошибка от L, R, Σℓ, B",
+    "Медиана и межквартильный размах \\(e\\) по квантильным корзинам, по всем шагам. Графики по \\(R\\) — только шаги с \\(R > 0\\); \\(R_{\\mathrm{step}} = \\sum C / \\sum L\\).");
   row = chartRow(s);
-  const pbins = D.prefill_binned || {};
-  const pErrLayout = (t, x) => baseLayout(t, x, "ошибка (медиана)", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка (медиана)" } } });
-  chart(row, () => [binnedTraces((pbins.L_mean || []).filter((b) => b.source === train?.id), (p) => partColor(p), (p) => PART_LABEL[p] ?? p), pErrLayout("Ошибка от L̄", "средняя L шага, токены")]);
-  chart(row, () => [binnedTraces((pbins.R_step || []).filter((b) => b.source === train?.id), (p) => partColor(p), (p) => PART_LABEL[p] ?? p), pErrLayout("Ошибка от R", "R шага")]);
+  const onTrain = (list) => (list || []).filter((b) => b.source === train?.id);
+  chart(row, () => [binnedTraces(onTrain(D.prefill_binned.L_mean)), errLayout("Prefill: ошибка от L̄", "средняя L шага, токены", "ошибка (медиана)")]);
+  if (onTrain(D.prefill_binned.R_step).length) chart(row, () => [binnedTraces(onTrain(D.prefill_binned.R_step)), errLayout("Prefill: ошибка от R", "R шага", "ошибка (медиана)")]);
   const g = D.prefill_grid || {};
   if ((g.median || []).length) chart(row, () => {
     const vals = g.median.flat().filter((v) => v != null);
@@ -363,21 +389,42 @@ function renderReport() {
       text: g.count.map((r) => r.map((n) => (n ? String(n) : ""))), texttemplate: "%{text}", textfont: { color: css("--fg"), size: 11 },
       colorbar: { tickformat: ".0%", outlinewidth: 0, tickfont: { color: css("--muted") } },
       hovertemplate: "L̄ ≈ %{x}<br>R ≈ %{y}<br>медиана e %{z:.1%}<br>шагов %{text}<extra></extra>",
-    }], baseLayout("Медиана e: L̄ × R", "средняя L шага (центр корзины)", "R шага (центр корзины)", { xaxis: { ...baseLayout().xaxis, type: "category", title: { text: "средняя L шага (центр корзины)" } }, yaxis: { ...baseLayout().yaxis, type: "category", title: { text: "R шага (центр корзины)" } } })];
+    }], baseLayout("Prefill: медиана e на сетке L̄ × R", "средняя L шага (центр корзины)", "R шага (центр корзины)", { xaxis: { ...baseLayout().xaxis, type: "category", title: { text: "средняя L шага (центр корзины)" } }, yaxis: { ...baseLayout().yaxis, type: "category", title: { text: "R шага (центр корзины)" } } })];
   });
+  row = chartRow(s);
+  chart(row, () => [binnedTraces(onTrain(D.decode_binned.sum_l)), errLayout("Decode: ошибка от Σℓ", "Σℓ, токены", "ошибка (медиана)")]);
+  chart(row, () => [binnedTraces(onTrain(D.decode_binned.B)), errLayout("Decode: ошибка от B", "B, запросов в шаге", "ошибка (медиана)")]);
+  row = chartRow(s);
+  const runHover = (r) => `${r.run_id} · ${sourceLabel(r.source)}<br>L̄ ${r.L_mean?.toFixed(0)}, R ${r.R_run?.toFixed(2)}<br>${r.scheduler}, кэш ${r.cache}<br>ошибка ${pct(r.rel_err)}`;
+  chart(row, () => [scatterByPart(runsAll, "L_mean", "rel_err", runHover), errLayout("T_total: ошибка от L̄ прогона", "средняя длина промпта прогона")]);
+  chart(row, () => [scatterByPart(runsAll, "R_run", "rel_err", runHover), errLayout("T_total: ошибка от R прогона", "R = ΣC / ΣL по prefill-строкам")]);
 
-  // Prefill function form: forms with a per-run factor, R dependence, noise.
+  // 7. Breakdown by scheduler and cache.
+  s = section("Разбивка по планировщику и кэшу", "Test-прогоны: \\(|e|\\) и средний знак \\(T_{\\mathrm{total}}\\).");
+  table(s, D.test_breakdown, [
+    { label: "планировщик", key: "scheduler", text: true }, { label: "кэш", key: "cache" },
+    { label: "средняя", key: "mean", fmt: (v) => pct(v) }, { label: "медиана", key: "median", fmt: (v) => pct(v) },
+    { label: "максимум", key: "max", fmt: (v) => pct(v) }, { label: "средний знак", key: "mean_signed", fmt: signed }, { label: "n", key: "count" },
+  ]);
+  const lost = D.runs.filter((r) => r.lost_tokens > 0);
+  if (lost.length) {
+    s.append(el("p", {}, "Прогоны, где сборщик потерял вытесненный запрос (шаги трассы верны, \\(O\\) — фактический):"));
+    table(s, lost, [{ label: "прогон", key: "run_id", text: true, mono: true }, { label: "часть", value: (r) => PART_LABEL[r.part] ?? r.part }, { label: "планировщик", key: "scheduler", text: true },
+      { label: "O", key: "O", fmt: int }, { label: "потеряно токенов", key: "lost_tokens", fmt: int }, { label: "e", key: "rel_err", fmt: (v) => pct(v) }]);
+  }
+
+  // 8. Prefill function form: forms with a per-run factor, R dependence, noise.
   const pfm = D.prefill_forms;
   if (pfm && pfm.run_factor) {
-    s = section("06", "Форма prefill: какая функция описывает время",
-      `Только prefill-шаги (один токен на запрос, decode не входит, пересчёта нет): ${pfm.n_steps} шагов в ${pfm.n_runs} прогонах. ` +
-      `Время шага \\(=\\) форма \\(\\times\\) множитель прогона (состояние общей машины), поэтому форма подбирается с отдельным множителем на каждый прогон и проверяется так: шаг предсказывается по форме, подобранной без него, и по множителю его прогона, оценённому на остальных шагах этого прогона.`);
+    s = section("Форма prefill: какая функция описывает время",
+      `Только prefill-шаги: ${pfm.n_steps} шагов в ${pfm.n_runs} прогонах. Время шага \\(=\\) форма \\(\\times\\) множитель прогона (состояние общей машины), ` +
+      "поэтому форма подбирается с отдельным множителем на каждый прогон и проверяется так: шаг предсказывается по форме, подобранной без него, и по множителю его прогона, оценённому на остальных шагах этого прогона.");
     const rf = pfm.run_factor, rq = pfm.request_R;
     s.append(el("p", {}, `Лучшая форма: \\(${pfm.best_latex}\\) — ошибка внутри прогона ${pct(pfm.table[0].in_run_mean)}. ` +
-      `Множитель прогона \\(\\in [${rf.p05.toFixed(2)},\\ ${rf.p95.toFixed(2)}]\\) (5–95%): без него у нового прогона ошибка около ${pct(pfm.table[0].set_cv_mean)} — это смещение прогона, а не форма. ` +
-      (pfm.cached_to_new_cost != null ? `Токен из кэша стоит \\(e/a = ${pfm.cached_to_new_cost.toFixed(2)}\\) от нового.` : "")));
-    s.append(el("p", { class: "lede" }, `Данные по \\(R\\): ${rq.hit_count} запросов-попаданий с \\(R \\in [${rq.hit_min?.toFixed(2)},\\ ${rq.hit_max?.toFixed(2)}]\\) и ${rq.zero_count} запросов с \\(R = 0\\) (промахи и прогоны без кэша). ` +
-      `В шаг попадают попадания и промахи вперемешку, поэтому у шагов с кэшем \\(R_{\\mathrm{step}} = \\sum C / \\sum L \\in [${rq.step_R_min_on?.toFixed(2)},\\ ${rq.step_R_max_on?.toFixed(2)}]\\); \\(R\\) отдельного запроса входит в форму линейно через \\(\\sum C\\).`));
+      `Множитель прогона \\(\\in [${rf.p05.toFixed(2)},\\ ${rf.p95.toFixed(2)}]\\) (5–95%): без него у нового прогона ошибка около ${pct(pfm.table[0].set_cv_mean)}. ` +
+      (pfm.cached_to_new_cost != null ? `Токен с готовым KV стоит \\(e/a = ${pfm.cached_to_new_cost.toFixed(2)}\\) от нового.` : "")));
+    if (rq.hit_count) s.append(el("p", { class: "lede" }, `Строк с \\(C > 0\\): ${rq.hit_count}, \\(R \\in [${rq.hit_min?.toFixed(2)},\\ ${rq.hit_max?.toFixed(2)}]\\); строк с \\(R = 0\\): ${rq.zero_count}. ` +
+      `У шагов с \\(C > 0\\) \\(R_{\\mathrm{step}} \\in [${rq.step_R_min_on?.toFixed(2)},\\ ${rq.step_R_max_on?.toFixed(2)}]\\).`));
     const formCoef = (c) => `\\(${Object.entries(c).map(([k, v]) => `${k === "alpha" ? "\\alpha" : texName(k)} = ${texNum(v)}`).join(",\\ ")}\\)`;
     table(s, pfm.table, [
       { label: "форма", key: "name", text: true },
@@ -390,28 +437,17 @@ function renderReport() {
       { label: "коэффициенты", value: (r) => formCoef(r.coef), text: true },
     ]);
     row = chartRow(s);
+    const byCache = (x, y, hover) => ["off", "on"].map((c) => {
+      const sub = pfm.points.filter((r) => r.cache === c);
+      return { type: "scatter", mode: "markers", name: `кэш ${c}`, x: sub.map((r) => r[x]), y: sub.map((r) => r[y]),
+        marker: { color: cacheColor(c), size: 8, opacity: 0.8, line: { width: 1, color: css("--bg") } }, text: sub.map(hover), hovertemplate: "%{text}<extra></extra>" };
+    }).filter((t) => t.x.length);
     chart(row, () => {
-      const traces = ["off", "on"].map((c) => {
-        const sub = pfm.points.filter((r) => r.cache === c);
-        return { type: "scatter", mode: "markers", name: `кэш ${c}`, x: sub.map((r) => r.R_step), y: sub.map((r) => r.per_token),
-          marker: { color: c === "on" ? partColor("transfer") : partColor("train"), size: 8, opacity: 0.8, line: { width: 1, color: css("--bg") } },
-          text: sub.map((r) => `${r.run_id} ${r.step_id}<br>R ${r.R_step.toFixed(2)}, B ${r.B}<br>ΣL ${r.sumL}, ΣC ${r.sumC}`),
-          hovertemplate: "%{text}<br>%{y:.3f}<extra></extra>" };
-      });
-      traces.push({ type: "scatter", mode: "lines", name: `форма для запроса L = ${Math.round(pfm.r_curve.L_ref)}`, x: pfm.r_curve.x, y: pfm.r_curve.y,
-        line: { color: css("--fg"), width: 2 }, hoverinfo: "skip" });
+      const traces = byCache("R_step", "per_token", (r) => `${r.run_id} ${r.step_id}<br>R ${r.R_step.toFixed(2)}, B ${r.B}<br>ΣL ${r.sumL}, ΣC ${r.sumC}<br>${r.per_token.toFixed(3)}`);
+      traces.push({ type: "scatter", mode: "lines", name: `форма для запроса L = ${Math.round(pfm.r_curve.L_ref)}`, x: pfm.r_curve.x, y: pfm.r_curve.y, line: { color: css("--fg"), width: 2 }, hoverinfo: "skip" });
       return [traces, baseLayout("T / T(R = 0) от R", "R = ΣC / ΣL", "T / T(R = 0), без множителя прогона и d·B")];
     });
-    chart(row, () => {
-      const traces = ["off", "on"].map((c) => {
-        const sub = pfm.points.filter((r) => r.cache === c);
-        return { type: "scatter", mode: "markers", name: `кэш ${c}`, x: sub.map((r) => r.N), y: sub.map((r) => r.T_norm),
-          marker: { color: c === "on" ? partColor("transfer") : partColor("train"), size: 8, opacity: 0.8, line: { width: 1, color: css("--bg") } },
-          text: sub.map((r) => `${r.run_id} ${r.step_id}<br>N ${r.N}, B ${r.B}, R ${r.R_step.toFixed(2)}<br>T ${r.T.toFixed(3)} s, без множителя ${r.T_norm.toFixed(3)} s`),
-          hovertemplate: "%{text}<extra></extra>" };
-      });
-      return [traces, baseLayout("T / множитель от N", "N — новые токены шага", "T / множитель прогона, s")];
-    });
+    chart(row, () => [byCache("N", "T_norm", (r) => `${r.run_id} ${r.step_id}<br>N ${r.N}, B ${r.B}, R ${r.R_step.toFixed(2)}<br>T ${r.T.toFixed(3)} s, без множителя ${r.T_norm.toFixed(3)} s`), baseLayout("T / множитель от N", "N — считаемые токены шага", "T / множитель прогона, s")]);
     chart(row, () => {
       const xs = pfm.pairs.map((p) => p.x), ys = pfm.pairs.map((p) => p.y);
       return [[{ type: "scatter", mode: "markers", name: "одинаковый состав, разные прогоны", x: xs, y: ys,
@@ -421,62 +457,25 @@ function renderReport() {
     });
   }
 
-  // 5. Decode steps for methods with step predictions.
-  const stepMethods = D.methods.filter((m) => m.has_step_predictions);
-  const dc = D.decode_sample.filter((r) => r.source === train?.id);
-  stepMethods.forEach((m, i) => {
-    s = section("07" + (stepMethods.length > 1 ? String.fromCharCode(97 + i) : ""), `Decode-шаги: ${m.name}`,
-      `Слева — случайная выборка до 4000 шагов; в центре и справа — медиана и межквартильный размах \\(e\\) по всем шагам в зависимости от \\(\\sum\\ell\\) и \\(B\\).`);
-    row = chartRow(s);
-    const pk = "pred__" + m.name, ek = "rel_err__" + m.name;
-    const hover = (r) => `${r.run_id}<br>T ${(r.T * 1e3).toFixed(1)} ms, T̂ ${(r[pk] * 1e3).toFixed(1)} ms<br>B ${r.B}, Σℓ ${r.sum_l}<br>ошибка ${pct(r[ek])}`;
-    chart(row, () => { const t = scatterByPart(dc, "T", pk, "part", hover); t.push(identityLine(dc.map((r) => r.T), dc.map((r) => r[pk]))); return [t, baseLayout("Decode-шаг", "замер, s", "предсказание, s")]; });
-    const bins = D.decode_binned[m.name] || {};
-    const onTrain = (list) => (list || []).filter((b) => b.source === train?.id);
-    const errLayout = (t, x) => baseLayout(t, x, "ошибка (медиана)", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка (медиана)" } } });
-    chart(row, () => [binnedTraces(onTrain(bins.sum_l), (p) => partColor(p), (p) => PART_LABEL[p] ?? p), errLayout("Ошибка от Σℓ", "Σℓ, токены")]);
-    chart(row, () => [binnedTraces(onTrain(bins.B), (p) => partColor(p), (p) => PART_LABEL[p] ?? p), errLayout("Ошибка от B", "B, запросов в шаге")]);
-  });
-
-  // 6. Error against SM clock.
-  s = section("08", "Ошибка от частоты SM", "Частота шага — среднее по GPU прогона в ближайшей выборке телеметрии (раз в ~1 с). Модели частоту не используют.");
-  row = chartRow(s);
-  chart(row, () => [scatterByPart(pf, "sm_clock_mhz", "rel_err", "part", pfHover), baseLayout("Prefill-шаги", "частота SM, МГц", "ошибка", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка" } } })]);
-  stepMethods.forEach((m) => chart(row, () => [binnedTraces(((D.decode_binned[m.name] || {}).sm_clock_mhz || []).filter((b) => b.source === train?.id), (p) => partColor(p), (p) => PART_LABEL[p] ?? p),
-    baseLayout(`Decode-шаги: ${m.name}`, "частота SM, МГц", "ошибка (медиана)", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка (медиана)" } } })]));
-  chart(row, () => [methodNames.map((m) => {
-    const sub = D.runs.filter((r) => r.method === m && r.source === train?.id && r.part !== "unused");
-    return { type: "scatter", mode: "markers", name: m, x: sub.map((r) => r.sm_clock_mhz_median), y: sub.map((r) => r.rel_err),
-      marker: { color: methodColor(m), size: 9, line: { width: 1, color: css("--bg") } }, text: sub.map((r) => `${r.run_id} (${r.part})`),
-      hovertemplate: "%{text}<br>%{x:.0f} МГц<br>ошибка %{y:.1%}<extra>" + m + "</extra>" };
-  }), baseLayout("Прогоны: T_total", "медианная частота SM, МГц", "ошибка", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "ошибка" } } })]);
-
-  // 7. Transfer sources.
-  const transfers = (D.sources || []).filter((x) => x.role === "transfer");
+  // 9. Transfer sources.
   transfers.forEach((src, i) => {
-    s = section("09" + (transfers.length > 1 ? String.fromCharCode(97 + i) : ""), `Перенос: ${src.label}`,
-      `Коэффициенты и кривые — от ${train?.label}, без подгонки. ${src.runs} прогон(ов), ${src.prefill_steps} prefill- и ${src.decode_steps} decode-шагов.`);
+    s = section(`Перенос: ${src.label}`,
+      `Коэффициенты — от ${train?.label}, без подгонки. ${src.runs} прогон(ов), ${src.prefill_steps} prefill- и ${src.decode_steps} decode-шагов.`);
     table(s, D.runs.filter((r) => r.source === src.id), [
-      { label: "прогон", key: "run_id", text: true }, { label: "способ", key: "method", text: true },
+      { label: "прогон", key: "run_id", text: true, mono: true },
       { label: "\\(T^{\\mathrm{wall}}\\), s", key: "wall_seconds", fmt: (v) => num(v, 4) }, { label: "\\(\\hat T_{\\mathrm{total}}\\), s", key: "pred", fmt: (v) => num(v, 4) },
-      { label: "\\(e\\)", key: "rel_err", fmt: (v) => pct(v) }, { label: "\\(T_{\\mathrm{prefill}}\\), s", key: "prefill_seconds", fmt: (v) => num(v, 3) },
-      { label: "\\(\\hat T_{\\mathrm{prefill}}\\), s", key: "prefill_hat", fmt: (v) => num(v, 3) }, { label: "\\(p_{\\mathrm{decode}}\\)", key: "p_decode", fmt: (v) => num(v, 3) },
-      { label: "пометка", key: "flag", text: true },
+      { label: "\\(e\\)", key: "rel_err", fmt: (v) => pct(v) }, { label: "\\(T_{\\mathrm{pf}}\\), s", key: "prefill_seconds", fmt: (v) => num(v, 3) },
+      { label: "\\(\\hat T_{\\mathrm{pf}}\\), s", key: "prefill_hat", fmt: (v) => num(v, 3) }, { label: "\\(I\\)", key: "I", fmt: int }, { label: "\\(O\\)", key: "O", fmt: int },
     ]);
     row = chartRow(s);
     const tpf = D.prefill_steps.filter((r) => r.source === src.id);
-    chart(row, () => { const t = scatterByPart(tpf, "T", "pred", "part", pfHover); t.push(identityLine(tpf.map((r) => r.T), tpf.map((r) => r.pred))); return [t, baseLayout("Prefill-шаги", "замер, s", "предсказание, s")]; });
+    chart(row, () => { const t = scatterByPart(tpf, "T", "pred", pfHover); t.push(identityLine(tpf.map((r) => r.T), tpf.map((r) => r.pred))); return [t, baseLayout("Prefill-шаги", "замер, s", "предсказание, s")]; });
     const tdc = D.decode_sample.filter((r) => r.source === src.id);
-    stepMethods.forEach((m) => chart(row, () => {
-      const pk = "pred__" + m.name;
-      const t = scatterByPart(tdc, "T", pk, "part", (r) => `${r.run_id}<br>T ${(r.T * 1e3).toFixed(1)} ms, T̂ ${(r[pk] * 1e3).toFixed(1)} ms<br>B ${r.B}, Σℓ ${r.sum_l}`);
-      t.push(identityLine(tdc.map((r) => r.T), tdc.map((r) => r[pk])));
-      return [t, baseLayout(`Decode-шаги: ${m.name}`, "замер, s", "предсказание, s")];
-    }));
+    if (tdc.length) chart(row, () => { const t = scatterByPart(tdc, "T", "pred", dcHover); t.push(identityLine(tdc.map((r) => r.T), tdc.map((r) => r.pred))); return [t, baseLayout("Decode-шаги", "замер, s", "предсказание, s")]; });
   });
 
-  // 8. Coverage.
-  s = section("10", "Покрытие данных", "Диапазоны признаков по каждой модели; гистограммы нормированы, чтобы сравнивать формы распределений.");
+  // 10. Coverage.
+  s = section("Покрытие данных", "Диапазоны признаков по каждому набору; гистограммы нормированы, чтобы сравнивать формы распределений.");
   table(s, D.coverage, [
     { label: "данные", value: (r) => sourceLabel(r.source), text: true }, { label: "признак", value: (r) => texVar(r.variable), text: true },
     { label: "min", key: "min", fmt: (v) => num(v, 4) }, { label: "p05", key: "p05", fmt: (v) => num(v, 4) },
@@ -484,37 +483,66 @@ function renderReport() {
     { label: "max", key: "max", fmt: (v) => num(v, 4) }, { label: "n", key: "n" },
   ]);
   row = chartRow(s);
-  const variables = [...new Set(D.coverage.map((r) => r.variable))];
-  variables.forEach((v) => chart(row, () => [(D.sources || []).map((src) => ({
+  [...new Set(D.coverage.map((r) => r.variable))].forEach((v) => chart(row, () => [(D.sources || []).map((src) => ({
     type: "histogram", name: src.label, x: (D.coverage_values[src.id] || {})[v] || [], histnorm: "probability", bingroup: 1,
     opacity: 0.6, marker: { color: src.role === "train" ? partColor("train") : partColor("transfer"), line: { width: 1, color: css("--bg") } },
     hovertemplate: `${v} %{x}<br>доля %{y:.1%}<extra>${src.label}</extra>`,
   })), baseLayout(subLabel(v), subLabel(v), "доля", { barmode: "overlay", yaxis: { ...baseLayout().yaxis, tickformat: ".0%", title: { text: "доля" } } })]));
 
-  // 9. Notes.
-  s = section("11", "Что посчитать нельзя или с оговорками");
+  // 11. Notes.
+  s = section("Ограничения и оговорки");
   s.append(el("ul", { class: "notes" }, ...(D.notes || []).map((n) => el("li", {}, n))));
+}
+
+function renderReport(index) {
+  D = DOC.models[index];
+  app.replaceChildren();
+  const meta = DOC.meta || {};
+  const header = el("header", {}, el("h1", {}, "Модель времени nano-vLLM"),
+    el("div", { class: "meta" }, ...[
+      `создан ${meta.created_utc ?? "—"}`, `коммит ${(meta.git_commit || "").slice(0, 7)}`, `fit=${meta.fit}`,
+      `seed=${meta.seed}`, `запуск ${meta.run_dir ?? "—"}`, `формат v${DOC.schema_version}`,
+    ].map((t) => el("span", {}, t))));
+  const sw = el("div", { class: "switch", role: "group", "aria-label": "Модель" });
+  DOC.models.forEach((m, i) => {
+    const b = el("button", { type: "button", "aria-pressed": String(i === index) }, m.label);
+    b.addEventListener("click", () => {
+      if (i === index) return;
+      try { history.replaceState(null, "", "#m" + (i + 1)); } catch (e) { /* the viewer may refuse */ }
+      renderReport(i); draw();
+    });
+    sw.append(b);
+  });
+  header.append(sw);
+  app.append(header);
+  renderModel();
 }
 
 function renderIndex() {
   app.append(el("header", {}, el("h1", {}, "Запуски модели времени nano-vLLM"),
-    el("div", { class: "meta" }, el("span", {}, `${D.entries.length} запусков`), el("span", {}, `формат v${D.schema_version}`))));
-  const methods = [...new Set(D.entries.flatMap((e) => Object.keys(e.test_mean_abs || {})))].sort();
-  const transfers = [...new Set(D.entries.flatMap((e) => Object.keys(e.transfer || {})))].sort();
-  const s = section("01", "Все запуски", "Средняя |ошибка| T_total на test по способам и ошибка со знаком на моделях переноса. Ссылка открывает отчёт запуска.");
+    el("div", { class: "meta" }, el("span", {}, `${D.entries.length} запусков`))));
+  const keys = [];
+  const cell = (e, key) => { for (const m of e.models || []) for (const [k, v] of Object.entries(m.cells || {})) if (k === key) return v; return null; };
+  for (const e of D.entries) for (const m of e.models || []) {
+    m.cells = {};
+    for (const [name, v] of Object.entries(m.test || {})) m.cells[`${m.label} · test |e| · ${name}`] = v;
+    for (const [t, byName] of Object.entries(m.transfer || {})) for (const [name, v] of Object.entries(byName)) m.cells[`${m.label} → ${t} · e · ${name}`] = v;
+    for (const k of Object.keys(m.cells)) if (!keys.includes(k)) keys.push(k);
+  }
+  const s = section("Все запуски", "Средняя |ошибка| T_total на test и ошибка со знаком на наборах переноса, по моделям и способам decode (старые запуски формата v1 — со своими способами). Ссылка открывает отчёт запуска.");
   table(s, D.entries, [
     { label: "запуск", value: (e) => el("a", { href: e.report }, e.run), text: true, mono: true },
-    { label: "fit", key: "fit" }, { label: "decode", key: "decode" }, { label: "seed", key: "seed" },
-    { label: "подбор", key: "train_label", text: true },
-    ...methods.map((m) => ({ label: `test ${m}`, value: (e) => pct((e.test_mean_abs || {})[m]) })),
-    ...transfers.flatMap((t) => methods.map((m) => ({ label: `${t} · ${m}`, value: (e) => pct(((e.transfer || {})[t] || {})[m]) }))),
+    { label: "формат", value: (e) => `v${e.schema_version}` }, { label: "fit", key: "fit" }, { label: "decode", key: "decode" }, { label: "seed", key: "seed" },
+    ...keys.map((k) => ({ label: k, value: (e) => pct(cell(e, k)) })),
     { label: "коммит", value: (e) => (e.git_commit || "").slice(0, 7), mono: true },
   ]);
+  const testKeys = keys.filter((k) => k.includes(" · test "));
+  const colors = ["--m1", "--m2", "--m3", "--m4"];
   const row = chartRow(s);
-  chart(row, () => [methods.map((m) => ({
-    type: "scatter", mode: "markers", name: m, x: D.entries.map((e) => e.run), y: D.entries.map((e) => (e.test_mean_abs || {})[m] ?? null),
-    marker: { color: methodColor(m), size: 10, line: { width: 1, color: css("--bg") } }, hovertemplate: "%{x}<br>%{y:.1%}<extra>" + m + "</extra>",
-  })), baseLayout("Средняя |ошибка| на test по запускам", "запуск", "|ошибка|", { yaxis: { ...baseLayout().yaxis, ...errAxis, title: { text: "|ошибка|" } } })]);
+  chart(row, () => [testKeys.map((k, i) => ({
+    type: "scatter", mode: "markers", name: k, x: D.entries.map((e) => e.run), y: D.entries.map((e) => cell(e, k)),
+    marker: { color: css(colors[i % 4]), size: 10, line: { width: 1, color: css("--bg") } }, hovertemplate: "%{x}<br>%{y:.1%}<extra>" + k + "</extra>",
+  })), errLayout("Средняя |ошибка| T_total на test по запускам", "запуск", "|ошибка|")]);
 }
 
 function drawCharts() {
@@ -523,7 +551,13 @@ function drawCharts() {
     Plotly.react(box, traces, layout, { displaylogo: false, responsive: true, modeBarButtonsToRemove: ["lasso2d", "select2d"] });
   }
 }
-if (D.kind === "index") renderIndex(); else renderReport();
+function draw() {
+  if (window.Plotly) drawCharts();
+  if (window.MathJax?.typesetPromise) MathJax.typesetPromise([app]);
+}
+// #m2 opens the second model; any other hash opens the first.
+const fromHash = Number((location.hash.match(/^#m(\d+)$/) || [])[1]) - 1;
+if (DOC.kind === "index") { D = DOC; renderIndex(); } else renderReport(fromHash >= 0 && fromHash < DOC.models.length ? fromHash : 0);
 if (window.Plotly) drawCharts(); else app.prepend(el("p", { class: "neg" }, "Не удалось загрузить Plotly: графики недоступны, таблицы ниже полные."));
 // Redraw with the other theme's tokens when the viewer switches themes.
 const redraw = () => window.Plotly && drawCharts();
