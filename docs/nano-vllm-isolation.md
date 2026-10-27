@@ -2,7 +2,7 @@
 
 Each measured attempt runs in a fresh session/process group with a hard per-attempt timeout (`dataset.attempt_timeout_s`). A non-success attempt stops the series immediately; its immutable attempt directory and `runs.json` remain the diagnostic record. Timeouts produce uniquely named supervisor diagnostics. On timeout or parent interruption, the supervisor sends TERM to the entire process group, waits briefly, then KILLs the group; this handles children that ignore TERM and descendants even if the worker leader exits.
 
-The child inherits the composed `logging` and `clearml` settings and calls the shared `taei.logging.configure_logging` API. The outer Hydra runtime remains responsible for lifecycle, output capture, and archives.
+The child inherits the composed `logging` settings and calls the shared `taei.logging.configure_logging` API. The outer Hydra runtime remains responsible for lifecycle, output capture, and archives.
 
 ## Eager-mode hardware profile
 

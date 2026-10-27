@@ -79,8 +79,19 @@ def run(cfg: DictConfig) -> dict:
     output_dir = Path(HydraConfig.get().runtime.output_dir)
     model_path = str(Path(cfg.dataset.model_path).expanduser().resolve())
     engine_config = _engine_config(cfg)
+    order_seed = int(cfg.dataset.order_seed)
+    protocol = str(cfg.dataset.workload_protocol)
+    context_cap = int(cfg.engine.max_model_len)
+    max_num_seqs = int(cfg.engine.max_num_seqs)
+    max_num_batched_tokens = int(cfg.engine.max_num_batched_tokens)
     if mode == "plan":
-        plan = build_plan(int(cfg.dataset.order_seed))
+        plan = build_plan(
+            order_seed,
+            workload_protocol=protocol,
+            context_cap=context_cap,
+            max_num_seqs=max_num_seqs,
+            max_num_batched_tokens=max_num_batched_tokens,
+        )
         plan["configuration"] = {
             "engine": engine_config,
             "model_path": model_path,
@@ -93,6 +104,7 @@ def run(cfg: DictConfig) -> dict:
             "request_count": plan["request_count"],
             "logical_prompt_tokens": plan["logical_prompt_tokens"],
             "requested_output_tokens": plan["requested_output_tokens"],
+            "schedule": plan.get("schedule"),
             "plan_path": str(output_dir / "plan.json"),
         }
     if mode == "download":
@@ -134,7 +146,13 @@ def run(cfg: DictConfig) -> dict:
             "report_path": diagnostic["path"],
         }
     _prepare_model(cfg, output_dir)
-    plan = build_plan(int(cfg.dataset.order_seed))
+    plan = build_plan(
+        order_seed,
+        workload_protocol=protocol,
+        context_cap=context_cap,
+        max_num_seqs=max_num_seqs,
+        max_num_batched_tokens=max_num_batched_tokens,
+    )
     limit = int(cfg.dataset.run_limit)
     selected = plan["matrix"][:limit] if limit > 0 else plan["matrix"]
     summaries = []
