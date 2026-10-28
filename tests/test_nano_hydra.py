@@ -216,3 +216,30 @@ def test_run_summary_and_supervised_attempt_use_invocation_scoped_runs(
     assert result["runs"][0]["path"] == str(seen_paths[0])
     summary = json.loads((invocation / "dataset-summary.json").read_text())
     assert summary["runs"][0]["path"] == str(seen_paths[0])
+
+
+def test_single_run_diagnostic_composes_and_plans_cache_on_only(tmp_path):
+    output_dir = tmp_path / "hydra-diagnostic"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "experiments/nano_vllm_qwen3_8b_long_context/run.py",
+            "--config-name",
+            "diagnostic",
+            "mode=plan",
+            f"hydra.run.dir={output_dir}",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    plan = __import__("json").loads((output_dir / "plan.json").read_text())
+    selected = plan["matrix"][:1]
+    assert "run_count=96" in result.stderr
+    assert len(selected) == 1
+    assert selected[0]["run_id"] == "L09"
+    assert selected[0]["prefix_cache_mode"] == "on"
+    assert selected[0]["scheduler_mode"] == "upstream_dynamic"
+    assert selected[0]["workload_id"] == "qwen3_8b_long_context_set_02"
+    assert selected[0]["pair_id"] == "qwen3_8b_long_context_set_02-seed-42"

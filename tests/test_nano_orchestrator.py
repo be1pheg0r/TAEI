@@ -156,6 +156,35 @@ def test_missing_inference_dependency_writes_rejected_immutable_attempt(
     assert len((attempt / "requests.jsonl").read_text().splitlines()) == 32
 
 
+def test_prepare_failure_persists_complete_traceback_in_attempt_artifact(
+    tmp_path, monkeypatch
+):
+    from taei.nano_dataset import engine
+
+    class FailingBackend:
+        def __init__(self, *args):
+            pass
+
+        def prepare(self):
+            raise AssertionError("diagnostic traceback sentinel")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(engine, "NanoVLLMBackend", FailingBackend)
+    result = run_attempt(
+        build_run_matrix()[0], str(tmp_path / "model"), {}, tmp_path / "runs"
+    )
+    attempt = Path(result["path"])
+    run = json.loads((attempt / "runs.json").read_text())
+    traceback_text = run["error"].get("traceback", "")
+
+    assert "Traceback (most recent call last):" in traceback_text
+    assert "diagnostic traceback sentinel" in traceback_text
+    assert "test_nano_orchestrator.py" in traceback_text
+    assert (attempt / "traceback.txt").read_text() == traceback_text
+
+
 def test_attempt_preserves_engine_field_status_reasons(tmp_path, monkeypatch):
     """A test-only backend proves status provenance, not GPU execution."""
     from taei.nano_dataset import engine

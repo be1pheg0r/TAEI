@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import traceback
 import uuid
 from pathlib import Path
 from typing import Any
@@ -517,6 +518,7 @@ def run_attempt(
     }
     records: list[dict[str, Any]] = []
     status, error = "failed", None
+    traceback_text: str | None = None
     backend = sampler = None
     generate_completed = False
     try:
@@ -571,10 +573,12 @@ def run_attempt(
             end_ns,
         )
     except Exception as exc:
+        traceback_text = traceback.format_exc()
         error = {
             "type": type(exc).__name__,
             "message": str(exc),
             "stage": "prepare_or_generate",
+            "traceback": traceback_text,
         }
         run_row["error"] = error
         run_row["metrics"] = {
@@ -674,6 +678,8 @@ def run_attempt(
             ("workload.json", workload),
         ):
             _write_json(run_dir / name, value)
+        if traceback_text is not None:
+            (run_dir / "traceback.txt").write_text(traceback_text, encoding="utf-8")
         run_row["status"] = status
         missing_hooks = [
             table

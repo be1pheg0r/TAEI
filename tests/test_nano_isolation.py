@@ -51,6 +51,40 @@ def test_isolated_worker_has_own_pid_and_failure_is_recorded(tmp_path):
     assert json.loads((artifact / "runs.json").read_text())["status"] == "failed"
 
 
+def test_production_isolated_attempt_keeps_exception_traceback(tmp_path, monkeypatch):
+    from taei.nano_dataset.workload import build_run_matrix
+
+    fake_engine = tmp_path / "fake" / "nanovllm"
+    fake_engine.mkdir(parents=True)
+    (fake_engine / "__init__.py").write_text("")
+    (fake_engine / "llm.py").write_text(
+        "raise AssertionError('child traceback diagnostic sentinel')\n"
+    )
+    monkeypatch.setenv(
+        "PYTHONPATH",
+        os.pathsep.join((str(fake_engine.parent), os.environ.get("PYTHONPATH", ""))),
+    )
+
+    result = run_isolated(
+        {
+            "run_spec": build_run_matrix()[0],
+            "model_path": str(tmp_path / "model"),
+            "engine_config": {"tensor_parallel_size": 1},
+            "output_root": str(tmp_path / "runs"),
+            "logging_config": {"logging": {"level": "INFO"}},
+        },
+        timeout_s=30,
+    )
+
+    attempt = Path(result["path"])
+    run = json.loads((attempt / "runs.json").read_text())
+    assert result["status"] == "failed"
+    assert run["error"]["type"] == "AssertionError"
+    assert "child traceback diagnostic sentinel" in run["error"]["traceback"]
+    assert "fake/nanovllm/llm.py" in run["error"]["traceback"]
+    assert (attempt / "traceback.txt").read_text() == run["error"]["traceback"]
+
+
 def test_failed_worker_stops_series_with_artifact_path(monkeypatch, tmp_path):
     import importlib.util
 
