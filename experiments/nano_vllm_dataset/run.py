@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import hydra
@@ -22,6 +23,59 @@ def _save_json(path: Path, value: dict) -> None:
     path.write_text(
         json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
         encoding="utf-8",
+    )
+
+
+def _report_attempt(run_id: str, result: dict) -> None:
+    """Log a concise outcome without exposing arbitrary exception text."""
+    status = str(result.get("status", "unknown"))
+    attempt_id = str(result.get("attempt_id", "unknown"))
+    artifact = Path(str(result.get("path", ".")))
+    if status == "success":
+        project_logging.logger.info(
+            "Attempt run={} attempt={} status=success artifact={}",
+            run_id,
+            attempt_id,
+            artifact,
+        )
+        return
+
+    error = {}
+    try:
+        data = json.loads((artifact / "runs.json").read_text(encoding="utf-8"))
+        if isinstance(data.get("error"), dict):
+            error = data["error"]
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    error_type = str(error.get("type") or "unknown")
+    stage = str(error.get("stage") or "unknown")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]{0,100}", error_type):
+        error_type = "unknown"
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]{0,100}", stage):
+        stage = "unknown"
+    message = str(error.get("message") or "")
+    reason = (
+        "CUDA out of memory"
+        if "CUDA out of memory" in message
+        else "see error artifact"
+    )
+    frames = re.findall(
+        r'  File "([^"\n]+)", line (\d+)', str(error.get("traceback") or "")
+    )
+    location = f"{Path(frames[-1][0]).name}:{frames[-1][1]}" if frames else "unknown"
+    trace = artifact / "traceback.txt"
+    detail = trace if trace.is_file() else artifact / "runs.json"
+    project_logging.logger.error(
+        "Attempt run={} attempt={} status={} stage={} error={} "
+        "reason={} location={} details={}",
+        run_id,
+        attempt_id,
+        status,
+        stage,
+        error_type,
+        reason,
+        location,
+        detail,
     )
 
 
@@ -161,23 +215,33 @@ def run(cfg: DictConfig) -> dict:
             bar.stage(
                 f"Attempt {index}/{len(selected)}: waiting · {item['run_id'][:24]}"
             )
-            attempt_summary = run_isolated(
-                {
-                    "run_spec": item,
-                    "model_path": model_path,
-                    "engine_config": engine_config,
-                    "output_root": cfg.dataset.output_root,
-                    "experiment_profile": dict(cfg.hardware_profile),
-                    "telemetry_interval_s": float(cfg.dataset.telemetry_interval_s),
-                    "logging_config": {
-                        "logging": dict(cfg.get("logging", {})),
-                        "clearml": dict(cfg.get("clearml", {})),
+            try:
+                attempt_summary = run_isolated(
+                    {
+                        "run_spec": item,
+                        "model_path": model_path,
+                        "engine_config": engine_config,
+                        "output_root": cfg.dataset.output_root,
+                        "experiment_profile": dict(cfg.hardware_profile),
+                        "telemetry_interval_s": float(cfg.dataset.telemetry_interval_s),
+                        "logging_config": {
+                            "logging": dict(cfg.get("logging", {})),
+                            "clearml": dict(cfg.get("clearml", {})),
+                        },
                     },
-                },
-                timeout_s=float(cfg.dataset.attempt_timeout_s),
-            )
+                    timeout_s=float(cfg.dataset.attempt_timeout_s),
+                )
+            except Exception as exc:
+                project_logging.logger.error(
+                    "Attempt run={} status=supervisor_error error={} "
+                    "details=see supervisor traceback and diagnostic files",
+                    item["run_id"],
+                    type(exc).__name__,
+                )
+                raise
             summaries.append(attempt_summary)
             bar.advance(str(attempt_summary.get("status", "unknown")))
+            _report_attempt(str(item["run_id"]), attempt_summary)
     result = {
         "mode": mode,
         "attempt_count": len(summaries),

@@ -353,6 +353,7 @@ WORKLOAD = _object(
                 "M",
                 "prefix_sweep",
                 "qwen3_8b_long_context",
+                "qwen3_8b_request_scaling",
                 *[f"prefix_sweep_set_{i:02d}" for i in range(1, 7)],
             ]
         },

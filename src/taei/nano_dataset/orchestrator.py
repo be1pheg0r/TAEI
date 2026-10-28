@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from .metadata import collect_environment, collect_hardware, collect_model
+from .request_scaling import PROTOCOL as SCALING_PROTOCOL
+from .request_scaling import build_scaling_plan
 from .schema import DATASET_SCHEMA, FIELD_DICTIONARY, SCHEMA_VERSION
 from .workload import (
     LONG_CONTEXT_SETS,
@@ -71,6 +73,12 @@ def build_plan(
     max_num_seqs: int = 8,
     max_num_batched_tokens: int = 16384,
 ) -> dict[str, Any]:
+    if workload_protocol == SCALING_PROTOCOL:
+        plan = build_scaling_plan(
+            order_seed, context_cap, max_num_seqs, max_num_batched_tokens
+        )
+        plan["schema_version"] = SCHEMA_VERSION
+        return plan
     if workload_protocol == "qwen3_8b_long_context_32k_v1":
         plan = build_long_context_plan(
             context_cap=context_cap,
@@ -535,7 +543,13 @@ def run_attempt(
         )
         prepared = backend.prepare()
         run_row["effective_config"] = prepared
-        run_row["prefix_priming"] = backend.prime_requests(workload["requests"])
+        prime_requests = workload["requests"]
+        if (
+            run_spec["workload_id"].startswith("qwen3_8b_request_scaling_n")
+            and run_spec["prefix_cache_mode"] == "off"
+        ):
+            prime_requests = []
+        run_row["prefix_priming"] = backend.prime_requests(prime_requests)
         sampler = TelemetrySampler(telemetry_interval_s, emit)
         emit(
             "telemetry",

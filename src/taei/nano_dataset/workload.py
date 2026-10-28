@@ -59,6 +59,10 @@ def _set_index(name: str) -> int:
 
 def build_workload(name: str, seed: int) -> dict[str, Any]:
     """Build 8 paired hit/miss requests with varied lengths and reuse blocks."""
+    if name.startswith("qwen3_8b_request_scaling_n"):
+        from .request_scaling import build_scaling_workload
+
+        return build_scaling_workload(name, seed)
     if (
         name.endswith("_prefill_only")
         and name.removesuffix("_prefill_only") in LONG_CONTEXT_SETS
