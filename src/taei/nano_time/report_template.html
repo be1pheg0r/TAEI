@@ -1941,43 +1941,47 @@ function renderDeck() {
   const r1 = cv[0];
   cap(s, `Линия при данном числе клиентов N — все сочетания входных (ITPS) и выходных (OTPS) токенов в секунду, которые GPU успевает обработать: на оси x — если бы запросы были только промптами, на оси y — только ответами. Крест — где окажется этот тип запросов (прогноз), точка — замер. С ростом N линия отходит от нуля: при 1 клиенте выход — до ${int(1 / r1.b_tilde)} ток/с, при ${knee.N} — до ${int(1 / knee.b_tilde)}. После предела памяти линия не двигается.`);
 
-  // 2. Prefill of one request.
+  // 2. Prefill of one request: the model only, colour by the cached share.
   s = section("Сколько GPU обрабатывает промпт одного запроса");
   row = chartRow(s);
   chart(row, () => {
-    // One point is an outlier: a 769-token prompt fully cached, a step ~25× its neighbours.
-    const single = Lc.prefill_grid.points.filter((r) => r.k === 1 && !r.mixed && !(r.cache === "on" && r.R === 0) && !(r.L === 769 && r.R_target >= 0.97));
-    return [measuredAndModel(groupBy(single, "R_target"), "L", "T", "T_hat", (k) => `из кэша ${Math.round(k * 100)}% промпта`, (r) => `промпт ${int(r.L)} токенов, из кэша ${pct0(r.R)}<br>замер ${num(r.T, 3)} с, модель ${num(r.T_hat, 3)} с`),
-      lay("длина промпта, токенов", "время обработки, с", { xaxis: logAxis("длина промпта, токенов"), yaxis: { ...baseLayout().yaxis, type: "log", title: { text: "время обработки, с" } } })];
+    const keep = [0, 0.25, 0.75, 0.97];
+    const pts = Lc.prefill_grid.points.filter((r) => r.k === 1 && !r.mixed && !(r.cache === "on" && r.R === 0) && keep.includes(r.R_target));
+    const ramp = (v) => (isDark() ? `hsl(${210 - 170 * v}, 75%, 62%)` : `hsl(${210 - 170 * v}, 70%, 45%)`);
+    const t = keep.map((rt) => {
+      const g = pts.filter((r) => r.R_target === rt).sort((a, b) => a.L - b.L);
+      return { type: "scatter", mode: "lines", showlegend: false, x: g.map((r) => r.L), y: g.map((r) => r.T_hat), line: { color: ramp(rt), width: 2.5, dash: "dash" },
+        hovertemplate: `из кэша ${Math.round(rt * 100)}%<br>промпт %{x:,.0f} токенов: %{y:.3f} с<extra></extra>` };
+    });
+    t.push({ type: "scatter", mode: "markers", x: [null], y: [null], showlegend: false, hoverinfo: "skip",
+      marker: { color: [0, 1], cmin: 0, cmax: 1, colorscale: [0, 0.25, 0.5, 0.75, 1].map((v) => [v, ramp(v)]), showscale: true,
+        colorbar: { title: { text: "доля промпта<br>из кэша", font: { size: 11, color: css("--muted") } }, tickvals: keep, ticktext: keep.map((v) => `${Math.round(v * 100)}%`), tickfont: { color: css("--muted") }, outlinewidth: 0 } } });
+    return [t, lay("длина промпта, токенов", "время обработки, с", { xaxis: logAxis("длина промпта, токенов"), yaxis: { ...baseLayout().yaxis, type: "log", title: { text: "время обработки, с" } } })];
   }, true);
-  cap(s, `Точки — замер, пунктир — модель. Промпт в 1 тыс. токенов обрабатывается за сотые доли секунды, в 30 тыс. — около секунды; чем больше промпта взято из кэша, тем быстрее. Ошибка модели — ${pct0(Lc.prefill_grid.mean_abs_e)}. Это первый кирпич: из таких оценок шагов складываются все остальные графики.`);
+  cap(s, `Прогноз модели: время обработки промпта одного запроса от его длины, цвет — какая доля промпта взята из кэша. Промпт в 1 тыс. токенов — сотые доли секунды, в 30 тыс. — несколько секунд; чем больше из кэша, тем быстрее. Ошибка модели против замера — ${pct0(Lc.prefill_grid.mean_abs_e)}.`);
 
-  // 2. Input load against interactivity.
-  s = section("Нагрузка на сервер против скорости для клиента");
+  // 3. Input load against the time between tokens of a client.
+  s = section("Нагрузка на сервер против времени между токенами для клиента");
   row = chartRow(s);
   chart(row, () => {
     const t = [], shapes = [], ann = [];
     for (const w of loads()) {
-      const c = color(w.load), pts = [...w.points].sort((a, b) => a.N - b.N);
-      t.push({ type: "scatter", mode: "lines", name: DECK_LABEL[w.load], x: w.curve[ch].map((r) => r.ttps), y: w.curve[ch].map((r) => r.itps_new), line: { color: c, width: 2.5 }, customdata: w.curve[ch].map((r) => r.N), hovertemplate: `${DECK_LABEL[w.load]} · прогноз<br>клиентов %{customdata}: клиенту %{x:.0f} ток/с, ITPS %{y:,.0f}<extra></extra>` });
-      t.push({ type: "scatter", mode: "markers", showlegend: false, x: pts.map((p) => 1 / p.tpot), y: pts.map((p) => p.itps_new), marker: { color: c, size: 7 }, customdata: pts.map((p) => p.N), hovertemplate: `${DECK_LABEL[w.load]} · замер<br>клиентов %{customdata}<extra></extra>` });
+      const c = color(w.load), pts = [...w.points].sort((a, b) => a.N - b.N), cvw = w.curve[ch];
+      t.push({ type: "scatter", mode: "lines", name: DECK_LABEL[w.load], x: cvw.map((r) => r.tpot * 1e3), y: cvw.map((r) => r.itps_new), line: { color: c, width: 2.5 },
+        customdata: cvw.map((r) => r.N), hovertemplate: `${DECK_LABEL[w.load]} · прогноз<br>клиентов %{customdata}: %{x:.0f} мс между токенами, ITPS %{y:,.0f}<extra></extra>` });
+      t.push({ type: "scatter", mode: "markers", showlegend: false, x: pts.map((p) => p.tpot * 1e3), y: pts.map((p) => p.itps_new), marker: { color: c, size: 7 },
+        customdata: pts.map((p) => p.N), hovertemplate: `${DECK_LABEL[w.load]} · замер<br>клиентов %{customdata}<extra></extra>` });
     }
     for (const x of E.slo) {
-      shapes.push({ type: "line", xref: "x", yref: "paper", x0: 1 / x.tpot, x1: 1 / x.tpot, y0: 0, y1: 1, line: { color: css("--muted"), width: 1, dash: "dot" } });
-      ann.push({ xref: "x", yref: "paper", x: 1 / x.tpot, y: 1, text: `${x.label} ≥ ${ru(1 / x.tpot)}`, showarrow: false, xanchor: "left", yanchor: "top", font: { size: 10, color: css("--muted") } });
+      shapes.push({ type: "line", xref: "x", yref: "paper", x0: x.tpot * 1e3, x1: x.tpot * 1e3, y0: 0, y1: 1, line: { color: css("--muted"), width: 1, dash: "dot" } });
+      ann.push({ xref: "x", yref: "paper", x: x.tpot * 1e3, y: 1, text: `${x.label} ≤ ${ru(x.tpot * 1e3)} мс`, showarrow: false, xanchor: "left", yanchor: "top", font: { size: 10, color: css("--muted") } });
     }
     const ymax = Math.max(...loads().flatMap((w) => [...w.curve[ch].map((r) => r.itps_new), ...w.points.map((p) => p.itps_new)])) * 1.08;
-    const xs = Array.from({ length: 120 }, (_, i) => 5 + i * 0.75);
-    [50e3, 100e3, 200e3, 400e3].forEach((c, i) => {
-      t.push({ type: "scatter", mode: "lines", name: "ITPS × скорость = const (гипербола)", legendgroup: "hyp", showlegend: i === 0, x: xs, y: xs.map((x) => c / x),
-        line: { color: css("--muted"), width: 1, dash: "dot" }, opacity: 0.6, hoverinfo: "skip" });
-      ann.push({ xref: "x", yref: "y", x: 88, y: c / 88, text: `${ru(c / 1000)} тыс.`, showarrow: false, xanchor: "right", yanchor: "bottom", font: { size: 9, color: css("--muted") } });
-    });
-    return [t, lay("скорость для клиента, токенов/с (1/TPOT, медиана)", "ITPS: входных токенов в секунду на сервер", { shapes, annotations: ann,
-      xaxis: { ...baseLayout().xaxis, range: [0, 90], title: { text: "скорость для клиента, токенов/с (1/TPOT, медиана)" } }, yaxis: { ...baseLayout().yaxis, range: [0, ymax], title: { text: "ITPS: входных токенов в секунду на сервер" } } })];
+    return [t, lay("время между токенами для клиента, мс", "ITPS", { shapes, annotations: ann,
+      xaxis: { ...baseLayout().xaxis, range: [0, 110], title: { text: "время между токенами для клиента, мс" } }, yaxis: { ...baseLayout().yaxis, range: [0, ymax], title: { text: "ITPS" } } })];
   }, true);
   const n1 = cv[0], n8 = cv.find((r) => r.N === 8) || cv[0];
-  cap(s, `Каждая линия идёт справа налево: 1 клиент — быстро, но сервер почти простаивает; больше клиентов — сервер загружен сильнее, каждому медленнее. Пунктиры — гиперболы, на которых произведение ITPS × скорость постоянно: так выглядел бы сервер, у которого общая работа не зависит от числа клиентов. Наша линия пересекает их: пока клиентов немного, шаг GPU почти не дорожает, нагрузка растёт почти пропорционально числу клиентов, а скорость для каждого падает медленно — линия выходит на более высокие гиперболы; ближе к пределу памяти она идёт вдоль гиперболы. Для «${DECK_LABEL[wl.load]}»: 1 клиент — ${int(n1.ttps)} ток/с и ${int(n1.itps_new)} входных токенов в секунду, 8 клиентов — ${int(n8.ttps)} ток/с и ${int(n8.itps_new)}. После предела памяти линия упирается в точку: новые клиенты только ждут в очереди. Точки — замер.`);
+  cap(s, `Каждая линия идёт слева направо по числу клиентов: 1 клиент — токены идут часто (${ru(n1.tpot * 1e3)} мс между ними), но сервер почти простаивает (ITPS ${int(n1.itps_new)}); 8 клиентов — ${ru(n8.tpot * 1e3)} мс и ITPS ${int(n8.itps_new)}. Это гипербола: ITPS = C·(1 − t₀/t), где t — время между токенами, а t₀ — время шага GPU без нагрузки. Поэтому первые клиенты резко поднимают нагрузку, а дальше она выходит на полку. После предела памяти линия упирается в точку: новые клиенты только ждут в очереди. Пунктиры — пороги требований. Точки — замер.`);
 
   // 3. Payback by the number of requests in parallel.
   s = section(`Окупаемость своей карты по числу параллельных запросов: ${DECK_LABEL[wl.load]}`);
