@@ -6,9 +6,10 @@
 
 Для запроса в prefill-шаге C — токены, чей KV уже есть до шага
 (``private_kv_cached_tokens``, то есть ``num_cached_tokens`` последовательности):
-чужой префикс из кэша (``prefix_reused_tokens`` входит сюда, он не больше C) и
-свой предыдущий кусок chunked prefill; N — токены, посчитанные в шаге: новые
-(``fresh_prefill_tokens``) и пересчитанные после вытеснения
+чужой префикс из кэша (``prefix_reused_tokens`` входит сюда, он не больше C;
+это C_кэш, R_кэш = C_кэш / L, у прогонов без кэша 0) и свой предыдущий кусок
+chunked prefill (C_нарезка = C − C_кэш, R_нарезка); N — токены, посчитанные в
+шаге: новые (``fresh_prefill_tokens``) и пересчитанные после вытеснения
 (``recompute_tokens``); L = C + N — длина запроса в KV после шага. У последнего
 куска (шаг выдаёт токен) L совпадает с ``context_tokens_before``, у
 промежуточного — меньше. Для decode-шага берётся текущая длина контекста ℓ
@@ -46,7 +47,7 @@ def _jsonl(path: Path) -> list[dict]:
         return [json.loads(line) for line in stream if line.strip()]
 
 
-def _prefill_requests(rows: list[dict], run_id: str) -> pd.DataFrame:
+def _prefill_requests(rows: list[dict], run_id: str, cache: bool) -> pd.DataFrame:
     reqs = pd.DataFrame([r for r in rows if r["relation"] == "prefill"])
     reqs["C"] = reqs["private_kv_cached_tokens"].astype(float)
     reqs["N"] = (reqs["fresh_prefill_tokens"] + reqs["recompute_tokens"]).astype(float)
@@ -62,20 +63,46 @@ def _prefill_requests(rows: list[dict], run_id: str) -> pd.DataFrame:
             f"{run_id}: L inconsistent with context_tokens_before in {bad.sum()} rows"
         )
     reqs["R"] = reqs["C"] / reqs["L"]
+    # C splits into a prefix-cache hit of another request (C_cache, R_cache)
+    # and the request's own KV from an earlier chunked-prefill piece or a
+    # previous step (C_chunk, R_chunk). The model uses C = C_cache + C_chunk.
+    reqs["C_cache"] = reqs["prefix_reused_tokens"].astype(float) if cache else 0.0
+    reqs["C_chunk"] = reqs["C"] - reqs["C_cache"]
+    reqs["R_cache"] = reqs["C_cache"] / reqs["L"]
+    reqs["R_chunk"] = reqs["C_chunk"] / reqs["L"]
+    # Prompt tokens served by this row: new ones and cache hits, so that a
+    # request split into pieces counts its prompt once (plus recompute).
+    reqs["served"] = reqs["L"] - reqs["C_chunk"]
     reqs["new"] = reqs["N"]  # L(1 - R)
     reqs["quad"] = reqs["L"] ** 2 - reqs["C"] ** 2  # L^2 (1 - R^2)
-    return reqs[["step_id", "request_id", "L", "C", "R", "new", "quad"]]
+    return reqs[
+        [
+            "step_id",
+            "request_id",
+            "L",
+            "C",
+            "R",
+            "C_cache",
+            "C_chunk",
+            "R_cache",
+            "R_chunk",
+            "served",
+            "new",
+            "quad",
+        ]
+    ]
 
 
 def _gpu_state(attempt: Path) -> dict[str, float]:
     """Run medians of SM clock, utilization and power over the run's visible GPUs."""
     env = json.loads((attempt / "environment.json").read_text())
-    visible = set(str(env.get("cuda_visible_devices", "")).split(","))
+    # No CUDA_VISIBLE_DEVICES (a local single-GPU run): every device is visible.
+    visible = set(str(env.get("cuda_visible_devices") or "").split(",")) - {""}
     gpus = [
         g
         for sample in _jsonl(attempt / "telemetry.jsonl")
         for g in sample.get("gpu_devices") or []
-        if g.get("uuid") in visible
+        if not visible or g.get("uuid") in visible
     ]
     median = lambda key: float(np.median([g[key] for g in gpus])) if gpus else np.nan  # noqa: E731
     return {
@@ -128,10 +155,12 @@ def load_run(attempt: Path, model: str) -> dict[str, pd.DataFrame | dict]:
     steps["run_id"] = run_id
     steps["model"] = model
 
-    reqs = _prefill_requests(_jsonl(attempt / "step_requests.jsonl"), run_id)
+    cache = run["prefix_cache_mode"] == "on"
+    reqs = _prefill_requests(_jsonl(attempt / "step_requests.jsonl"), run_id, cache)
     reqs = reqs.assign(run_id=run_id, model=model)
     prefill = steps[steps["phase"] == "prefill"].merge(
-        reqs.groupby("step_id")[["new", "quad"]].sum().reset_index(), on="step_id"
+        reqs.groupby("step_id")[["new", "quad", "served"]].sum().reset_index(),
+        on="step_id",
     )
     decode = steps[steps["phase"] == "decode"].copy()
     requests = _requests(
@@ -159,13 +188,19 @@ def load_run(attempt: Path, model: str) -> dict[str, pd.DataFrame | dict]:
         "decode_seconds": float(decode["T"].sum()),
         "n_prefill_steps": len(prefill),
         "n_decode_steps": len(decode),
-        # Run-level L and R over its prefill rows (R = sum C / sum L).
+        # Run-level L and R over its prefill rows (R = sum C / sum L), and its
+        # two parts: prefix-cache hits and own KV of chunked prefill.
         "L_mean": float(requests["prompt"].mean()),
         "R_run": float(reqs["C"].sum() / reqs["L"].sum()),
+        "R_cache_run": float(reqs["C_cache"].sum() / reqs["L"].sum()),
+        "R_chunk_run": float(reqs["C_chunk"].sum() / reqs["L"].sum()),
         # Machine state, for notes only: the model does not use it.
         "kv_blocks": (
             (run.get("effective_config") or {}).get("effective_config") or {}
         ).get("num_kvcache_blocks"),
+        "kv_block_size": (
+            (run.get("effective_config") or {}).get("effective_config") or {}
+        ).get("kvcache_block_size"),
         **_gpu_state(attempt),
     }
     return {
@@ -177,10 +212,24 @@ def load_run(attempt: Path, model: str) -> dict[str, pd.DataFrame | dict]:
     }
 
 
-def attempts(root: Path | str) -> pd.DataFrame:
+def _roots(root) -> list[Path]:
+    """One ``runs/`` folder or several (a list): their runs are pooled."""
+    return [Path(r) for r in root] if isinstance(root, (list, tuple)) else [Path(root)]
+
+
+def _run_files(root, series: list[str] | None) -> list[Path]:
+    files = sorted(f for r in _roots(root) for f in r.glob("*/*/runs.json"))
+    if series is None:
+        return files
+    # Local-grid run ids are <phase>-<series>-<n>: keep the listed series.
+    keep = tuple(f"-{s}-" for s in series)
+    return [f for f in files if any(k in f.parts[-3] for k in keep)]
+
+
+def attempts(root, series: list[str] | None = None) -> pd.DataFrame:
     """Status, cache mode and error type of every attempt under ``root``."""
     rows = []
-    for runs_json in sorted(Path(root).glob("*/*/runs.json")):
+    for runs_json in _run_files(root, series):
         info = json.loads(runs_json.read_text())
         rows.append(
             {
@@ -193,8 +242,15 @@ def attempts(root: Path | str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def load(root: Path | str, model: str, run_ids: list[str] | None = None) -> Dataset:
-    """Load successful runs under ``root`` (a ``runs/`` folder of one launch)."""
+def load(
+    root,
+    model: str,
+    run_ids: list[str] | None = None,
+    series: list[str] | None = None,
+) -> Dataset:
+    """Load successful runs under ``root`` (one ``runs/`` folder or a list).
+
+    ``series`` keeps local-grid runs of those series (S1, S2, ...)."""
     parts: dict[str, list] = {
         "run": [],
         "prefill": [],
@@ -202,7 +258,7 @@ def load(root: Path | str, model: str, run_ids: list[str] | None = None) -> Data
         "decode": [],
         "request_table": [],
     }
-    for runs_json in sorted(Path(root).glob("*/*/runs.json")):
+    for runs_json in _run_files(root, series):
         info = json.loads(runs_json.read_text())
         if info.get("status") != "success":
             continue
@@ -219,4 +275,17 @@ def load(root: Path | str, model: str, run_ids: list[str] | None = None) -> Data
         prefill_requests=pd.concat(parts["requests"], ignore_index=True),
         decode_steps=pd.concat(parts["decode"], ignore_index=True),
         requests=pd.concat(parts["request_table"], ignore_index=True),
+    )
+
+
+def subset(data: Dataset, run_ids) -> Dataset:
+    """The same tables restricted to ``run_ids``."""
+    keep = set(run_ids)
+    pick = lambda frame: frame[frame["run_id"].isin(keep)].reset_index(drop=True)  # noqa: E731
+    return Dataset(
+        runs=pick(data.runs),
+        prefill_steps=pick(data.prefill_steps),
+        prefill_requests=pick(data.prefill_requests),
+        decode_steps=pick(data.decode_steps),
+        requests=pick(data.requests),
     )

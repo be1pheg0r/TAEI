@@ -22,7 +22,9 @@ from omegaconf import DictConfig, OmegaConf
 from taei.launch import maybe_launch_detached
 from taei.nano_time import data as nano_data
 from taei.nano_time import report, report_data
-from taei.nano_time.evaluate import evaluate
+from taei.nano_time.evaluate import TRAIN_SOURCE, evaluate
+from taei.nano_time.local_report import build_local
+from taei.nano_time.prefill_forms import analyze as analyze_prefill_forms
 from taei.runtime import run_experiment
 
 REPO = Path(__file__).resolve().parents[2]
@@ -60,12 +62,12 @@ def _notes(label, train, transfers, attempts) -> list[str]:
             "потерянный запрос не входит."
         )
     if (train.prefill_requests["C"] == 0).all():
-        notes.append(f"{label}: кэша нет, \\(R = 0\\) у всех запросов.")
+        notes.append(f"{label}: кэша нет и нарезки нет, \\(R = 0\\) у всех запросов.")
     elif (train.runs["cache"] == "on").sum() == 0:
         notes.append(
-            f"{label}: попаданий в кэш нет; \\(R > 0\\) только у вторых кусков "
-            "chunked prefill (свой готовый KV), поэтому разбиения «train без кэша, "
-            "test с кэшем» нет."
+            f"{label}: попаданий в кэш нет (\\(R_{{\\text{{кэш}}}} = 0\\)); "
+            "\\(R_{\\text{нарезка}} > 0\\) только у вторых кусков chunked prefill "
+            "(свой готовый KV), поэтому разбиения «train без кэша, test с кэшем» нет."
         )
     state = lambda d: (  # noqa: E731
         f"SM {d.runs['gpu_sm_mhz'].median():.0f} МГц, загрузка GPU "
@@ -80,16 +82,32 @@ def _notes(label, train, transfers, attempts) -> list[str]:
             "(загрузка 100%, предел мощности, мало KV-блоков из-за чужой памяти), "
             "ошибка переноса — это разница машин, а не модели."
         )
-        if (data.prefill_requests["C"] == 0).all():
+        if (data.prefill_requests["C_cache"] == 0).all():
             notes.append(
-                f"{name}: кэш выключен (\\(R = 0\\)) — зависимость от \\(R\\) "
-                "на этом наборе проверить нельзя."
+                f"{name}: кэш выключен (\\(R_{{\\text{{кэш}}}} = 0\\)) — "
+                "зависимость от кэша на этом наборе проверить нельзя."
             )
         notes.append(
             f"{name}: {len(data.runs)} прогон(ов), {len(data.prefill_steps)} "
             f"prefill- и {len(data.decode_steps)} decode-шагов."
         )
     return notes
+
+
+def _local_notes(local: dict) -> list[str]:
+    c = local["conditions"]
+    return [
+        f"Своя GPU ({c['gpu']}), чужих задач нет; частота SM зафиксирована, во всех "
+        f"попытках {c['sm_clock_min']:.0f}–{c['sm_clock_max']:.0f} МГц. Попытки, где "
+        "прошивка ноутбука срезала мощность (частота ниже фиксированной), сборщик "
+        "отбрасывает и повторяет — в этом сборе таких не было.",
+        "S4: приход запросов во времени. TTFT по модели — предсказанные шаги от "
+        "первого шага после прихода запроса до шага его первого токена; само "
+        "расписание (какие шаги и в каком порядке) взято из трассы.",
+        "Prefill-формы для этой модели подбираются без множителя прогона (машина "
+        "одна, у прогона сетки обычно один prefill-шаг) и проверяются "
+        "leave-one-point-out: все повторы одной точки сетки уходят в test вместе.",
+    ]
 
 
 def _git_commit() -> str:
@@ -104,9 +122,15 @@ def _git_commit() -> str:
         return f"unavailable: {type(error).__name__}"
 
 
+def _root(entry):
+    dirs = entry.runs_dir
+    return [REPO / d for d in dirs] if OmegaConf.is_list(dirs) else REPO / dirs
+
+
 def _load(entry) -> nano_data.Dataset:
-    ids = list(entry.run_ids) if entry.run_ids else None
-    return nano_data.load(REPO / entry.runs_dir, entry.label, ids)
+    ids = list(entry.run_ids) if entry.get("run_ids") else None
+    series = list(entry.series) if entry.get("series") else None
+    return nano_data.load(_root(entry), entry.label, ids, series)
 
 
 def run(cfg: DictConfig) -> dict:
@@ -133,17 +157,51 @@ def run(cfg: DictConfig) -> dict:
             len(train.decode_steps),
             list(transfers),
         )
-        ev = evaluate(
-            train, transfers, cfg.fit, int(cfg.seed), fit_kwargs, list(entry.split_by)
-        )
+        split_by = OmegaConf.to_container(entry.split_by)
+        ev = evaluate(train, transfers, cfg.fit, int(cfg.seed), fit_kwargs, split_by)
+        series = list(entry.series) if entry.get("series") else None
         notes = _notes(
-            entry.label, train, transfers, nano_data.attempts(REPO / entry.runs_dir)
+            entry.label, train, transfers, nano_data.attempts(_root(entry), series)
         )
-        models.append(report_data.build(ev, entry.label, meta, notes))
+        forms = local = None
+        if entry.get("local"):
+            # Own GPU, one prefill step per grid run: forms without a run factor,
+            # checked leave-one-point-out on the train grids.
+            forms = analyze_prefill_forms(
+                nano_data.subset(train, ev.split["train"]), "workload", False
+            )
+            labels = {TRAIN_SOURCE: entry.label}
+            local = build_local(
+                ev,
+                [REPO / r for r in entry.local.roots],
+                [REPO / p for p in entry.local.plans],
+                REPO / entry.local.server_runs_dir,
+                labels,
+            )
+            notes += _local_notes(local)
+        caveats = {t.label: t.caveat for t in entry.transfer or [] if t.get("caveat")}
+        window = OmegaConf.to_container(cfg.windows)
+        models.append(
+            report_data.build(
+                ev,
+                entry.label,
+                meta,
+                notes,
+                forms,
+                local,
+                window,
+                caveats,
+                entry.get("caveat"),
+            )
+        )
         logger.info(
             "{}: prefill {} · decode {}", entry.label, ev.prefill.coef, ev.decode.coef
         )
 
+    # Extra branches (for example the Vidur check) are finished documents of
+    # their own experiments; they are appended after our models, unchanged.
+    for path in cfg.get("extra_branches") or []:
+        models.append(json.loads((REPO / path).read_text(encoding="utf-8")))
     document = report_data.document(meta, models)
     json_path = out / "time_model.json"
     json_path.write_text(
@@ -167,7 +225,7 @@ def run(cfg: DictConfig) -> dict:
     metrics = {"report": str(report_path), "index": str(index_path)}
     for model in models:
         key = model["label"].replace(" ", "_")
-        for row in model["metrics"]:
+        for row in model.get("metrics", []):  # extra branches have none
             if row["what"] == "T_total per run" and row["part"] in ("test", "transfer"):
                 part = row["part"] if row["part"] == "test" else "transfer"
                 metrics[f"{key}_{part}_T_total_mean_abs_err"] = row["mean_abs"]

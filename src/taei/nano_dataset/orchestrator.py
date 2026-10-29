@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import atexit
+import copy
 import hashlib
 import json
 import time
@@ -10,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .metadata import collect_environment, collect_hardware, collect_model
+from .local_grid import build_spec_workload
 from .schema import DATASET_SCHEMA, FIELD_DICTIONARY, SCHEMA_VERSION
 from .workload import (
     LONG_CONTEXT_SETS,
@@ -20,6 +23,7 @@ from .workload import (
 )
 
 COLLECTOR_VERSION = "0.3.0"
+THROTTLE_COOLDOWN_S = 30.0
 TRACE_TABLES = (
     "steps",
     "step_requests",
@@ -323,6 +327,76 @@ def evaluate_calibration_scope(
     }
 
 
+def _machine_state(telemetry: list[dict[str, Any]]) -> dict[str, Any]:
+    """SM clock range and active clock limiters over the attempt's GPU samples."""
+    devices = [d for row in telemetry for d in row.get("gpu_devices") or []]
+    clocks = [d["sm_clock_mhz"] for d in devices if d.get("sm_clock_mhz")]
+    # 0x1 is GPU idle (expected between steps); any other bit throttles the clock.
+    limiters = sorted(
+        {
+            d["clocks_event_reasons"] & ~1
+            for d in devices
+            if d.get("clocks_event_reasons")
+        }
+        - {0}
+    )
+    return {
+        "samples": len(devices),
+        "sm_clock_mhz_min": min(clocks) if clocks else None,
+        "sm_clock_mhz_max": max(clocks) if clocks else None,
+        "clock_limiter_masks": limiters,
+        "temperature_c_max": max(
+            (d["temperature_c"] for d in devices if d.get("temperature_c")),
+            default=None,
+        ),
+    }
+
+
+def run_attempts(
+    run_specs: list[dict[str, Any]],
+    model_path: str,
+    engine_config: dict[str, Any],
+    output_root: str | Path,
+    on_result: Any = None,
+    **kwargs: Any,
+) -> list[dict[str, Any]]:
+    """Run several attempts with one engine loaded once in this process.
+
+    Each attempt still starts from a reset block manager and reseeded RNG and
+    writes its own directory. After a failed attempt the engine state is not
+    trusted: the rest is left to a fresh process (the caller resubmits it). A
+    throttled attempt is followed by a cooldown; the caller reruns it later.
+    """
+    from .engine import create_engine, warm_engine
+
+    engine = create_engine(model_path, engine_config)
+    warm_engine(engine)
+    metadata = collect_hardware(), collect_environment(), collect_model(model_path)
+    results = []
+    try:
+        for spec in run_specs:
+            result = run_attempt(
+                spec,
+                model_path,
+                engine_config,
+                output_root,
+                engine=engine,
+                metadata=metadata,
+                **kwargs,
+            )
+            results.append(result)
+            if on_result is not None:
+                on_result(result)
+            if result["status"] == "throttled":
+                time.sleep(THROTTLE_COOLDOWN_S)  # let the platform restore power
+            elif result["status"] != "success":
+                break
+    finally:
+        atexit.unregister(engine.exit)
+        engine.exit()
+    return results
+
+
 def _metadata_id(value: dict[str, Any], prefix: str) -> str:
     return prefix + "-" + _sha(value)[:16]
 
@@ -337,8 +411,17 @@ def run_attempt(
     telemetry_interval_s: float = 1.0,
     calibration_report: dict[str, Any] | None = None,
     calibration_report_path: str | None = None,
+    engine: Any = None,
+    metadata: tuple[dict, dict, dict] | None = None,
+    locked_sm_clock_mhz: int | None = None,
 ) -> dict[str, Any]:
-    """Execute one measured run into a unique immutable attempt directory."""
+    """Execute one measured run into a unique immutable attempt directory.
+
+    ``engine`` is a nano-vLLM engine shared by several attempts of one worker
+    process (see ``run_attempts``); ``metadata`` is its hardware, environment
+    and model description, collected once. With ``locked_sm_clock_mhz`` an
+    attempt whose GPU samples show a lower SM clock gets status "throttled".
+    """
     attempt_id = str(uuid.uuid4())
     run_dir = Path(output_root) / run_spec["run_id"] / attempt_id
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -415,12 +498,15 @@ def run_attempt(
             }
         )
 
-    hardware, environment, model = (
-        collect_hardware(),
-        collect_environment(),
-        collect_model(model_path),
-    )
-    workload = build_workload(run_spec["workload_id"], int(run_spec["seed"]))
+    if metadata is None:
+        metadata = collect_hardware(), collect_environment(), collect_model(model_path)
+    hardware, environment, model = copy.deepcopy(metadata)
+    if run_spec.get("workload_spec"):
+        workload = build_spec_workload(
+            run_spec["workload_id"], int(run_spec["seed"]), run_spec["workload_spec"]
+        )
+    else:
+        workload = build_workload(run_spec["workload_id"], int(run_spec["seed"]))
     stable_hardware = {
         "cpu_model": hardware.get("cpu_model"),
         "architecture": hardware.get("architecture"),
@@ -530,6 +616,8 @@ def run_attempt(
             run_spec["scheduler_mode"],
             int(run_spec["seed"]),
             emit,
+            engine=engine,
+            fixed_batch_size=run_spec.get("fixed_batch_size"),
         )
         prepared = backend.prepare()
         run_row["effective_config"] = prepared
@@ -544,6 +632,8 @@ def run_attempt(
         start_ns = time.monotonic_ns()
         records = backend.generate(workload["requests"])
         generate_completed = True
+        if getattr(backend, "closed_loop_summary", None):
+            run_row["closed_loop"] = backend.closed_loop_summary
         backend.synchronize()
         end_ns = time.monotonic_ns()
         status = "success"
@@ -570,23 +660,40 @@ def run_attempt(
             start_ns,
             end_ns,
         )
+        requested = {
+            r["request_id"]: r["requested_output_tokens"] for r in workload["requests"]
+        }
+        short = [
+            row["request_id"]
+            for row in records
+            if row.get("output_token_count") != requested[row["request_id"]]
+        ]
+        # A closed loop stopped by its time limit never submits the rest of
+        # its pool; every submitted request must still be complete.
+        expected = (run_row.get("closed_loop") or {}).get("submitted", len(requested))
+        if short or len(records) != expected:
+            raise RuntimeError(f"requests without all requested tokens: {short}")
     except Exception as exc:
+        status = "failed"
         error = {
             "type": type(exc).__name__,
             "message": str(exc),
             "stage": "prepare_or_generate",
         }
         run_row["error"] = error
-        run_row["metrics"] = {
-            "wall_seconds": None,
-            "output_tokens": None,
-            "output_tokens_per_second": None,
-            "requests_per_second": None,
-            "input_tokens": None,
-            "prefix_reused_tokens": None,
-            "cache_hit_tokens": None,
-            "cache_hit_ratio": None,
-        }
+        # After a completed generate the attempt fails only for lost tokens;
+        # its measured metrics stay.
+        if not generate_completed:
+            run_row["metrics"] = {
+                "wall_seconds": None,
+                "output_tokens": None,
+                "output_tokens_per_second": None,
+                "requests_per_second": None,
+                "input_tokens": None,
+                "prefix_reused_tokens": None,
+                "cache_hit_tokens": None,
+                "cache_hit_ratio": None,
+            }
     finally:
         if sampler is not None:
             sampler.stop()
@@ -606,8 +713,11 @@ def run_attempt(
                 run_row["error"] = error
                 status = "failed"
         by_id = {row["request_id"]: row for row in records}
+        pool = workload["requests"]
+        if (run_row.get("closed_loop") or {}).get("submitted") is not None:
+            pool = [r for r in pool if r["request_id"] in by_id]  # only submitted
         requests = []
-        for request in workload["requests"]:
+        for request in pool:
             result = by_id.get(request["request_id"], {})
             requests.append(
                 {
@@ -674,6 +784,22 @@ def run_attempt(
             ("workload.json", workload),
         ):
             _write_json(run_dir / name, value)
+        run_row["machine_state"] = _machine_state(events["telemetry"])
+        floor = run_row["machine_state"]["sm_clock_mhz_min"]
+        # The platform may cut GPU power during the measurement: its steps are
+        # then slower than at the locked clock, so the attempt is not usable.
+        if (
+            status == "success"
+            and locked_sm_clock_mhz
+            and floor is not None
+            and floor < locked_sm_clock_mhz
+        ):
+            status = "throttled"
+            run_row["error"] = {
+                "type": "Throttled",
+                "message": f"SM clock fell to {floor} MHz",
+                "stage": "measurement",
+            }
         run_row["status"] = status
         missing_hooks = [
             table

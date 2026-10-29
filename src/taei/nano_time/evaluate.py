@@ -53,7 +53,11 @@ def evaluate(
     fit_kwargs: dict,
     split_by=splits.DEFAULT_KEYS,
 ) -> Evaluation:
-    sp = splits.stratified(train_data.runs, seed, split_by)
+    sp = (
+        splits.by_series(train_data.runs, split_by)
+        if isinstance(split_by, dict)
+        else splits.stratified(train_data.runs, seed, split_by)
+    )
     cache_sp = splits.cache_off_on(train_data.runs)
     pf = train_data.prefill_steps
     prefill = PrefillModel().fit(

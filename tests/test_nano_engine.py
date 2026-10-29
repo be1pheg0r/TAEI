@@ -314,7 +314,9 @@ def test_cpu_primitive_loader_restores_import_namespace():
     assert sys.modules.get("transformers") is transformer_before
 
 
-def _traced_cpu_engine(primitives, mode, events, prefix_mode="on"):
+def _traced_cpu_engine(
+    primitives, mode, events, prefix_mode="on", blocks=32, fixed_batch_size=None
+):
     from types import SimpleNamespace
 
     from taei.nano_dataset.engine import NanoVLLMBackend
@@ -334,6 +336,9 @@ def _traced_cpu_engine(primitives, mode, events, prefix_mode="on"):
         def add_request(self, prompt, sampling_params):
             self.scheduler.add(primitives["Sequence"](prompt, sampling_params))
 
+        def is_finished(self):
+            return self.scheduler.is_finished()
+
         def step(self):
             seqs, is_prefill = self.scheduler.schedule()
             token_ids = self.model_runner.call("run", seqs, is_prefill)
@@ -350,7 +355,7 @@ def _traced_cpu_engine(primitives, mode, events, prefix_mode="on"):
         max_num_batched_tokens=1024,
         eos=-1,
         kvcache_block_size=256,
-        num_kvcache_blocks=32,
+        num_kvcache_blocks=blocks,
     )
     primitives["Sequence"].block_size = 256
     scheduler = primitives["Scheduler"](config)
@@ -361,6 +366,7 @@ def _traced_cpu_engine(primitives, mode, events, prefix_mode="on"):
         mode,
         42,
         lambda table, row: events.append((table, row)),
+        fixed_batch_size=fixed_batch_size,
     )
     backend.engine = Engine(scheduler)
     backend._patch_live_engine()
@@ -438,6 +444,217 @@ def test_fixed_batch_keeps_all_requests_and_advances_only_after_wave_finishes():
     assert all(row["produced_tokens"] == row["actual_batch_size"] for row in step_rows)
     assert all(row["host_observed_timestamp_ns"] is not None for row in token_rows)
     assert {row["request_id"] for row in joins} == {f"r{i}" for i in range(5)}
+    backend._restore()
+
+
+def test_fixed_batch_keeps_a_preempted_request_until_it_finishes():
+    from taei.nano_dataset.engine import load_pinned_cpu_primitives
+
+    primitives = load_pinned_cpu_primitives(require_upstream(), expected_revision=PIN)
+    events = []
+    # Two requests of one block each grow into a second block; with three
+    # blocks the second must be preempted, recomputed and still complete.
+    backend = _traced_cpu_engine(primitives, "fixed_batch", events, blocks=3)
+    params = primitives["SamplingParams"](
+        temperature=0.6, max_tokens=40, ignore_eos=True
+    )
+    backend._pending_request_ids = iter(("a", "b"))
+    for _ in range(2):
+        backend.engine.add_request(list(range(230)), params)
+    for _ in range(500):
+        if backend.engine.is_finished():
+            break
+        backend.engine.step()
+    assert backend.engine.is_finished()
+    done = [
+        row["request_id"]
+        for table, row in events
+        if table == "scheduler_events" and row.get("event_type") == "complete"
+    ]
+    assert sorted(done) == ["a", "b"]
+    preempted = [
+        rid
+        for table, row in events
+        if table == "scheduler_events" and row.get("event_type") == "schedule"
+        for rid in row.get("preempted_request_ids", [])
+    ]
+    assert preempted
+    recompute = [
+        row for table, row in events if table == "steps" and row["recompute_tokens"]
+    ]
+    assert recompute
+    backend._restore()
+
+
+def test_fixed_batch_wave_size_is_separate_from_max_num_seqs():
+    from taei.nano_dataset.engine import load_pinned_cpu_primitives
+
+    primitives = load_pinned_cpu_primitives(require_upstream(), expected_revision=PIN)
+    events = []
+    backend = _traced_cpu_engine(primitives, "fixed_batch", events, fixed_batch_size=1)
+    params = primitives["SamplingParams"](
+        temperature=0.6, max_tokens=1, ignore_eos=True
+    )
+    backend._pending_request_ids = iter(("a", "b"))
+    for _ in range(2):
+        backend.engine.add_request([10, 11], params)
+    backend.engine.step()
+    first = [
+        row
+        for table, row in events
+        if table == "scheduler_events" and row.get("event_type") == "schedule"
+    ][-1]
+    assert first["admitted_request_ids"] == ["a"]
+    backend._restore()
+
+
+def test_timed_arrivals_add_requests_in_offset_order_and_wait_when_idle():
+    from taei.nano_dataset.engine import load_pinned_cpu_primitives
+
+    primitives = load_pinned_cpu_primitives(require_upstream(), expected_revision=PIN)
+    events = []
+    backend = _traced_cpu_engine(primitives, "upstream_dynamic", events)
+    sampling = primitives["SamplingParams"]
+    sys.modules.setdefault(
+        "nanovllm.sampling_params", types.SimpleNamespace(SamplingParams=sampling)
+    )
+    requests = [
+        {
+            "request_id": rid,
+            "input_token_ids": [10 + i, 11],
+            "requested_output_tokens": 2,
+            "temperature": 0.6,
+            "ignore_eos": True,
+            "planned_arrival_offset_ns": offset,
+        }
+        for i, (rid, offset) in enumerate((("late", 30_000_000), ("early", 1)))
+    ]
+    records = {r["request_id"]: r for r in backend.generate(requests)}
+    assert all(r["output_token_count"] == 2 for r in records.values())
+    early, late = records["early"], records["late"]
+    assert early["enqueue_monotonic_ns"] < late["enqueue_monotonic_ns"]
+    # The late request is enqueued only after its offset, so after early ends.
+    assert late["enqueue_monotonic_ns"] >= early["finish_monotonic_ns"]
+    assert late["enqueue_monotonic_ns"] - early["enqueue_monotonic_ns"] >= 25_000_000
+    backend._restore()
+
+
+def test_closed_loop_keeps_n_in_system_and_marks_roles():
+    from taei.nano_dataset.engine import load_pinned_cpu_primitives
+
+    primitives = load_pinned_cpu_primitives(require_upstream(), expected_revision=PIN)
+    events = []
+    backend = _traced_cpu_engine(primitives, "upstream_dynamic", events)
+    sampling = primitives["SamplingParams"]
+    sys.modules.setdefault(
+        "nanovllm.sampling_params", types.SimpleNamespace(SamplingParams=sampling)
+    )
+    n, warmup, measure = 2, 2, 3
+    loop = {"N": n, "warmup": warmup, "measure": measure}
+    requests = [
+        {
+            "request_id": f"q{i}",
+            "arrival_index": i,
+            "input_token_ids": [10 + i, 11],
+            "requested_output_tokens": 2 + i % 2,
+            "temperature": 0.6,
+            "ignore_eos": True,
+            "planned_arrival_offset_ns": 0,
+            "closed_loop": loop,
+        }
+        for i in range(n + warmup + measure - 1)
+    ]
+    records = backend.generate(requests)
+    assert all(
+        r["output_token_count"] == r["requested_output_tokens"]
+        for r in [{**q, **rec} for q, rec in zip(requests, records, strict=True)]
+    )
+    enq = sorted(r["enqueue_monotonic_ns"] for r in records)
+    fin = sorted(r["finish_monotonic_ns"] for r in records)
+    # Before the stop_after-th completion the system holds at most N, and every
+    # completion before it submits the next request.
+    for t in enq:
+        assert sum(e <= t for e in enq) - sum(f < t for f in fin) <= n
+    assert enq[n] >= fin[0]
+    roles = [
+        r["closed_loop_role"]
+        for r in sorted(records, key=lambda r: r["finish_monotonic_ns"])
+    ]
+    assert roles == ["warmup"] * warmup + ["measure"] * measure + ["tail"] * (n - 1)
+    summary = backend.closed_loop_summary
+    assert summary["window_start_ns"] == fin[warmup - 1]
+    assert summary["window_end_ns"] == fin[warmup + measure - 1]
+    backend._restore()
+
+
+def test_closed_loop_time_limit_stops_submitting_after_min_measure():
+    from taei.nano_dataset.engine import load_pinned_cpu_primitives
+
+    primitives = load_pinned_cpu_primitives(require_upstream(), expected_revision=PIN)
+    backend = _traced_cpu_engine(primitives, "upstream_dynamic", [])
+    sampling = primitives["SamplingParams"]
+    sys.modules.setdefault(
+        "nanovllm.sampling_params", types.SimpleNamespace(SamplingParams=sampling)
+    )
+    # Any window is over at once: the loop stops at the first completion
+    # past warmup + min_measure; the rest of the pool is never submitted.
+    n, warmup, measure, min_measure = 2, 2, 5, 1
+    loop = {
+        "N": n,
+        "warmup": warmup,
+        "measure": measure,
+        "min_measure": min_measure,
+        "max_window_s": 1e-9,
+    }
+    requests = [
+        {
+            "request_id": f"q{i}",
+            "arrival_index": i,
+            "input_token_ids": [10 + i, 11],
+            "requested_output_tokens": 2,
+            "temperature": 0.6,
+            "ignore_eos": True,
+            "planned_arrival_offset_ns": 0,
+            "closed_loop": loop,
+        }
+        for i in range(n + warmup + measure - 1)
+    ]
+    records = backend.generate(requests)
+    summary = backend.closed_loop_summary
+    assert summary["measure"] == min_measure and summary["planned_measure"] == measure
+    assert summary["submitted"] == len(records) == n + warmup + min_measure - 1
+    assert all(r["output_token_count"] == 2 for r in records)
+    roles = sorted(r["closed_loop_role"] for r in records)
+    assert roles.count("warmup") == warmup and roles.count("measure") == min_measure
+    backend._restore()
+
+
+def test_steps_record_sum_of_contexts_unique_kv_blocks_and_cache_fill():
+    from taei.nano_dataset.engine import load_pinned_cpu_primitives
+
+    primitives = load_pinned_cpu_primitives(require_upstream(), expected_revision=PIN)
+    events = []
+    backend = _traced_cpu_engine(primitives, "upstream_dynamic", events)
+    params = primitives["SamplingParams"](
+        temperature=0.6, max_tokens=3, ignore_eos=True
+    )
+    shared = list(range(256))  # one full block both requests share
+    backend._pending_request_ids = iter(("a", "b"))
+    # Blocks are hashed after their prefill, so b comes once a is computed.
+    backend.engine.add_request(shared + [900, 901], params)
+    backend.engine.step()
+    backend.engine.add_request(shared + [902, 903], params)
+    while not backend.engine.is_finished():
+        backend.engine.step()
+    steps = [row for table, row in events if table == "steps"]
+    for row in steps:
+        assert row["context_tokens_sum"] == sum(row["contexts_before"].values())
+        assert row["kv_capacity_blocks"] == 32
+        assert row["kv_fill"] == row["kv_used_blocks"] / 32
+        assert row["preempted_count"] == 0
+    both = [r for r in steps if r["phase"] == "decode" and r["batch_size"] == 2]
+    # Two own tail blocks and the shared prefix block counted once.
+    assert both and all(row["kv_unique_blocks"] == 3 for row in both)
     backend._restore()
 
 

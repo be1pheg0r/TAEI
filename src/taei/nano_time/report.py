@@ -64,6 +64,8 @@ def _v1_entry(doc: dict) -> dict:
 def _v2_entry(doc: dict) -> dict:
     models = []
     for model in doc["models"]:
+        if model.get("kind") == "vidur":
+            continue  # an operation-level branch: no T_total to index
         labels = {s["id"]: s["label"] for s in model["sources"]}
         rows = [r for r in model["metrics"] if r["what"] == "T_total per run"]
         test = [r["mean_abs"] for r in rows if r["part"] == "test"]

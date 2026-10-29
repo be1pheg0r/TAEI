@@ -1,0 +1,19 @@
+# Does the GPU keep up with Poisson arrivals? Reads the local S4 traces only
+# (no GPU, no reruns). Output: runs/<time>/concurrency.json.
+defaults:
+  - base
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://taei.conf
+  run:
+    dir: runs/${now:%Y%m%d_%H%M%S}
+
+experiment:
+  name: concurrency_check
+  description: In-system requests, queue growth and token rates of the local S4 arrival series.
+
+runs_root: data/qwen-3-06b-local/phase_B/runs # B-S4-* attempts
+series: S4
+growth_limit: 0.1 # in-system growth per arrival above this -> queue grows without bound

@@ -84,6 +84,11 @@ ul.notes { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 80
 a { color: var(--accent); }
 a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .neg { color: var(--bad); } .pos { color: var(--good); }
+td.muted { color: var(--muted); }
+table.summary th, table.summary td { white-space: normal; vertical-align: top; min-width: 10ch; }
+table.summary td strong { font-weight: 600; }
+.banner { max-width: none; padding: 10px 14px; border: 1px solid var(--bad); border-radius: 6px; background: var(--surface); }
+details > summary { cursor: pointer; color: var(--accent); font-weight: 500; margin: 4px 0 10px; }
 @media (max-width: 520px) { .chart { height: 300px; } .chart.tall { height: 360px; } h1 { font-size: 1.5rem; } }
 </style>
 
@@ -118,9 +123,9 @@ const texName = (k) => {
   const [head, ...rest] = k.split("_");
   return rest.length ? `${head}_{\\mathrm{${rest.join("\\,")}}}` : head;
 };
-const TEX_VAR = { "L": "L", "R": "R", "B": "B", "Σℓ": "\\sum\\ell", "O": "O" };
+const TEX_VAR = { "L": "L", "R": "R", "R_кэш": "R_{\\text{кэш}}", "R_нарезка": "R_{\\text{нарезка}}", "B": "B", "Σℓ": "\\sum\\ell", "O": "O" };
 const texVar = (name) => (TEX_VAR[name] ? `\\(${TEX_VAR[name]}\\)` : name);
-const subLabel = (text) => String(text).replace(/([A-Za-zΣℓ̂]+)_([A-Za-z]+)/g, "$1<sub>$2</sub>");
+const subLabel = (text) => String(text).replace(/([A-Za-zΣℓ̂]+)_([A-Za-zА-Яа-яё]+)/g, "$1<sub>$2</sub>");
 const el = (tag, attrs = {}, ...children) => {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -188,7 +193,8 @@ function scatterByPart(rows, x, y, hover) {
   const parts = [...new Set(rows.map((r) => r.part))];
   return parts.map((p) => {
     const sub = rows.filter((r) => r.part === p);
-    return { x: sub.map((r) => r[x]), y: sub.map((r) => r[y]), mode: "markers", type: "scattergl", name: PART_LABEL[p] ?? p,
+    // SVG unless the chart is large: a page may hold only ~16 WebGL contexts.
+    return { x: sub.map((r) => r[x]), y: sub.map((r) => r[y]), mode: "markers", type: rows.length > 6000 ? "scattergl" : "scatter", name: PART_LABEL[p] ?? p,
       marker: { color: partColor(p), size: 7, opacity: 0.7, line: { width: 1, color: css("--bg") } },
       text: sub.map(hover), hovertemplate: "%{text}<extra></extra>" };
   });
@@ -215,12 +221,14 @@ const metric = (what, part, source) => (D.metrics || []).find((r) => r.what === 
 
 // ITPS–OTPS: model lines a·ITPS + b·OTPS = 1 for one family, run points and per-run lines.
 function budgetChart(family, title, varying) {
-  const P = D.prices, runs = P.runs.filter((r) => r.part !== "unused");
+  // The local model's train grids (prefill-only S1, decode S2) are synthetic
+  // points far off any workload; its charts show test mixes and transfers.
+  const P = D.prices, runs = P.runs.filter((r) => r.part !== "unused" && !(D.local && r.part === "train"));
   const lines = P.lines[family];
   const dashes = ["solid", "dash", "dot", "dashdot"];
   const traces = lines.map((l, i) => ({
-    type: "scatter", mode: "lines", name: l.label, x: [0, l.itps_max], y: [l.otps_max, 0],
-    line: { color: css("--fg"), width: 1.5, dash: dashes[i % 4] },
+    type: "scatter", mode: "lines", name: l.reachable === false ? `${l.label} — недостижимо по памяти` : l.label, x: [0, l.itps_max], y: [l.otps_max, 0],
+    line: { color: l.reachable === false ? css("--muted") : css("--fg"), width: 1.5, dash: l.reachable === false ? "dot" : dashes[i % 4] },
     hovertemplate: `${l.label}<br>1/ã = %{customdata[0]:,.0f} ток/с<br>1/b̃ = %{customdata[1]:,.1f} ток/с<extra></extra>`,
     customdata: [[l.itps_max, l.otps_max], [l.itps_max, l.otps_max]],
   }));
@@ -229,7 +237,7 @@ function budgetChart(family, title, varying) {
   const label = (x, y, text, ax, ay) => ann.push({ x, y, text, showarrow: true, arrowhead: 0, arrowwidth: 1, arrowcolor: css("--muted"), ax, ay, font: { size: 10, color: css("--muted") } });
   lines.forEach((l, i) => {
     if (varying === "itps") label(l.itps_max, 0, `1/ã ${int(l.itps_max)}`, 0, -22 - 14 * i);
-    else label(0, l.otps_max, `1/b̃ ${num(l.otps_max, 3)}`, 40 + 10 * i, 0);
+    else label(0, l.otps_max, `1/b̃ ${num(l.otps_max, 3)}` + (l.reachable === false ? " — недостижимо по памяти" : ""), 40 + 10 * i, 0);
   });
   if (varying === "itps") label(0, lines[0].otps_max, `1/b̃ ${num(lines[0].otps_max, 3)}`, 46, 0);
   else label(lines[0].itps_max, 0, `1/ã ${int(lines[0].itps_max)}`, 0, -26);
@@ -251,6 +259,753 @@ function budgetChart(family, title, varying) {
     { annotations: ann, xaxis: { ...baseLayout().xaxis, range: [0, xmax], title: { text: "ITPS = I / T, входных ток/с" } }, yaxis: { ...baseLayout().yaxis, range: [0, ymax], title: { text: "OTPS = O / T, выходных ток/с" } } })];
 }
 
+// One-hue ramp for an ordered variable (R, L, N): darker = larger in light mode, lighter in dark.
+const isDark = () => document.documentElement.dataset.theme === "dark" || (document.documentElement.dataset.theme !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+const seqColor = (i, n) => { const t = n > 1 ? i / (n - 1) : 1; return isDark() ? `hsl(212, 75%, ${38 + 42 * t}%)` : `hsl(212, 70%, ${72 - 44 * t}%)`; };
+const uniq = (xs) => [...new Set(xs)].sort((a, b) => a - b);
+const errBars = (rows) => ({ type: "data", symmetric: false, array: rows.map((r) => r.T_max - r.T), arrayminus: rows.map((r) => r.T - r.T_min), thickness: 1, width: 3 });
+const logAxis = (t, base2 = false) => ({ ...baseLayout().xaxis, type: "log", title: { text: t }, ...(base2 ? { dtick: Math.log10(2) } : {}) });
+// Measured markers and model dashed lines for each group, one ramp colour per group.
+function measuredAndModel(groups, x, y, yHat, name, hover) {
+  const traces = [];
+  groups.forEach(([key, rows], i) => {
+    const color = seqColor(i, groups.length);
+    rows.sort((a, b) => a[x] - b[x]);
+    traces.push({ type: "scatter", mode: "markers+lines", name: `${name(key)} · замер`, x: rows.map((r) => r[x]), y: rows.map((r) => r[y]),
+      line: { color, width: 1 }, marker: { color, size: 8, line: { width: 1, color: css("--bg") } }, legendgroup: String(key),
+      text: rows.map(hover), hovertemplate: "%{text}<extra></extra>", ...(rows[0].T_max != null && y === "T" ? { error_y: { ...errBars(rows), color } } : {}) });
+    traces.push({ type: "scatter", mode: "lines", name: `${name(key)} · модель`, x: rows.map((r) => r[x]), y: rows.map((r) => r[yHat]),
+      line: { color, width: 2, dash: "dash" }, legendgroup: String(key), showlegend: false, hoverinfo: "skip" });
+  });
+  return traces;
+}
+const groupBy = (rows, key) => { const m = new Map(); for (const r of rows) { const k = r[key]; if (!m.has(k)) m.set(k, []); m.get(k).push(r); } return [...m.entries()].sort((a, b) => a[0] - b[0]); };
+
+// Sections about the local Qwen3-0.6B collection (own GPU, local_grid_v1).
+function renderLocal() {
+  const Lc = D.local, c = Lc.conditions;
+  const ph = (p) => c.phases.find((x) => x.phase === p) || {};
+  let s = section("Локальный прогон: условия сбора",
+    `Своя GPU ${c.gpu} (${c.gpu_memory_gb.toFixed(0)} ГБ), TP = ${c.engine.tensor_parallel_size}, eager, частота SM зафиксирована. Две фазы: A — контролируемые сетки (на них подобрана модель) и повтор серверной матрицы, B — смеси по доле prefill и поток запросов; коэффициенты для расчёта точек B взяты из подгонки на A. ` +
+    "Каждые 25 попыток — реперный прогон REF (prefix_sweep_set_01, seed 42, без кэша): по нему видны шум и дрейф машины.");
+  const tiles = el("div", { class: "tiles" });
+  const tile = (label, value, sub) => tiles.append(el("div", { class: "tile" }, el("span", { class: "label" }, label), el("span", { class: "value" }, value), el("span", { class: "sub" }, sub)));
+  const all = c.phases.reduce((a, p) => a + p.attempts, 0), ok = c.phases.reduce((a, p) => a + p.success, 0);
+  tile("попыток", int(all), `успешных ${int(ok)}, троттлинг ${c.phases.reduce((a, p) => a + p.throttled, 0)}, ошибок ${c.phases.reduce((a, p) => a + p.failed, 0)}`);
+  tile("частота SM", `${c.sm_clock_min}–${c.sm_clock_max}`, `МГц во всех попытках; температура до ${c.temperature_max} °C`);
+  tile("KV-кэш", `${c.kv_blocks.join(", ")} блоков`, `по ${c.engine.kvcache_block_size} токенов, gpu_memory_utilization ${c.engine.gpu_memory_utilization}`);
+  const ref = Lc.reference.stats;
+  tile("шум REF", pct(Math.max(...ref.map((r) => r.std_rel)), 2), `std/mean времени прогона; среднее ${ref.map((r) => `${r.phase}: ${num(r.mean, 4)} с`).join(", ")}`);
+  tile("время и объём", `${(c.phases.reduce((a, p) => a + p.hours, 0)).toFixed(1)} ч`, `${c.phases.reduce((a, p) => a + p.gigabytes, 0).toFixed(1)} ГБ трасс`);
+  s.append(tiles);
+  table(s, c.phases, [
+    { label: "фаза", key: "phase" }, { label: "попыток", key: "attempts", fmt: int }, { label: "успешных", key: "success", fmt: int },
+    { label: "троттлинг", key: "throttled" }, { label: "ошибок", key: "failed" },
+    { label: "серии", value: (r) => Object.entries(r.series_counts).map(([k, v]) => `${k} ${v}`).join(", "), text: true },
+    { label: "точек отброшено планом", key: "dropped_points", fmt: (v, r) => `${v} (не помещаются в KV или O < 2)` },
+    { label: "часов", key: "hours", fmt: (v) => v.toFixed(2) }, { label: "ГБ", key: "gigabytes", fmt: (v) => v.toFixed(1) },
+  ]);
+  s.append(el("p", { class: "lede mono" }, Object.entries(c.engine).map(([k, v]) => `${k}=${v}`).join(" · ")));
+  s.append(el("p", { class: "lede" }, "Дрейф эталонного прогона и разброс повторов — в разделе «Качество данных»."));
+  let row;
+
+  // S1: prefill grid.
+  const P = Lc.prefill_grid.points;
+  s = section("Prefill: сетка S1 (decode = 1)",
+    `Один prefill на запрос, \\(O = 1\\): ${P.length} точек × 5 повторов. Точки — медиана по повторам, усы — min…max (разброс повторов: медиана ${pct(Lc.prefill_grid.repeat_spread_median, 2)}); пунктир — модель A с коэффициентами этой модели. ` +
+    `Средняя \\(|e|\\) по точкам ${pct(Lc.prefill_grid.mean_abs_e)}. Выше 16 384 токенов prefill режется на куски (chunked prefill). ` +
+    (P.some((r) => r.spread > 1) ? `У ${P.filter((r) => r.spread > 1).length} точек повторы расходятся больше чем вдвое — это точки с \\(R \\approx 1\\), где в шаге считается один новый токен: такой шаг похож на decode при \\(B = 1\\) и иногда длится ~0,3 с, как выбросы decode-шагов ниже.` : ""));
+  row = chartRow(s);
+  const ptHover = (r) => `${r.point_id}<br>k ${r.k}, L ${int(r.L)}, R ${num(r.R, 3)}<br>T ${num(r.T, 4)} с (${num(r.T_min, 4)}…${num(r.T_max, 4)}), T̂ ${num(r.T_hat, 4)} с<br>e ${pct(r.e)}`;
+  chart(row, () => {
+    const single = P.filter((r) => r.k === 1 && !r.mixed && !(r.cache === "on" && r.R === 0));
+    const traces = measuredAndModel(groupBy(single, "R_target"), "L", "T", "T_hat", (k) => `R ≈ ${k}`, ptHover);
+    return [traces, baseLayout("Один запрос: T_pf от L при разных R", "L, токены", "T<sub>pf</sub>, с", { xaxis: logAxis("L, токены"), yaxis: { ...baseLayout().yaxis, type: "log", title: { text: "T_pf, с" } } })];
+  }, true);
+  chart(row, () => {
+    const on = P.filter((r) => r.k === 1 && !r.mixed && r.cache === "on");
+    const base = new Map(on.filter((r) => r.R === 0).map((r) => [r.L, r]));
+    const rows = on.filter((r) => base.has(r.L)).map((r) => ({ ...r, ratio: r.T / base.get(r.L).T, ratio_hat: r.T_hat / base.get(r.L).T_hat }));
+    const pick = [1025, 4097, 16385, 36865].filter((L) => rows.some((r) => r.L === L));
+    const traces = measuredAndModel(groupBy(rows.filter((r) => pick.includes(r.L)), "L"), "R", "ratio", "ratio_hat", (k) => `L ${int(k)}`, (r) => `${ptHover(r)}<br>T/T(R=0) ${num(r.ratio, 3)}, модель ${num(r.ratio_hat, 3)}`);
+    traces.push({ type: "scatter", mode: "lines", name: "1 − R", x: [0, 1], y: [1, 0], line: { color: css("--muted"), dash: "dot", width: 1 }, hoverinfo: "skip" });
+    return [traces, baseLayout("Кэш: T_pf(R) / T_pf(R = 0) у одного запроса", "R = C / L", "T(R) / T(R = 0)")];
+  }, true);
+  row = chartRow(s);
+  chart(row, () => {
+    const multi = P.filter((r) => r.cache === "off" && !r.mixed);
+    const traces = measuredAndModel(groupBy(multi, "L"), "k", "T", "T_hat", (k) => `L ${int(k)}`, ptHover);
+    return [traces, baseLayout("k запросов в одном шаге (R = 0)", "k, запросов в prefill-шаге", "T<sub>pf</sub>, с", { xaxis: logAxis("k, запросов в prefill-шаге", true), yaxis: { ...baseLayout().yaxis, type: "log", title: { text: "T_pf, с" } } })];
+  }, true);
+  chart(row, () => {
+    const t = scatterByPart(P.map((r) => ({ ...r, part: r.mixed ? "transfer" : r.cache === "on" ? "test" : "train" })), "L", "e", ptHover);
+    t.forEach((tr) => { tr.name = { train: "без кэша", test: "с кэшем", transfer: "hit + miss в шаге" }[tr.name === "перенос" ? "transfer" : tr.name] ?? tr.name; });
+    return [t, errLayout("Ошибка модели A по точкам S1", "L, токены", "e = T̂ / T − 1")];
+  }, true);
+  table(s, [...P].sort((a, b) => Math.abs(b.e) - Math.abs(a.e)), [
+    { label: "точка", key: "point_id", text: true, mono: true }, { label: "кэш", key: "cache" }, { label: "k", key: "k" }, { label: "L", key: "L", fmt: int },
+    { label: "R", key: "R", fmt: (v) => num(v, 3) }, { label: "шагов", key: "steps" }, { label: "повторов", key: "n" },
+    { label: "T, с (медиана)", key: "T", fmt: (v) => num(v, 4) }, { label: "разброс", key: "spread", fmt: (v) => pct(v, 2) },
+    { label: "T̂, с", key: "T_hat", fmt: (v) => num(v, 4) }, { label: "e", key: "e", fmt: (v) => pct(v) },
+  ], true);
+
+  // S2: decode grid.
+  const Q = Lc.decode_grid.points;
+  s = section("Decode: сетка S2 (B одинаковых запросов разом)",
+    `B одинаковых запросов длины \\(L\\) с \\(O = 256\\) (190 при \\(L = 65\\)): B постоянен на всех decode-шагах прогона, а \\(\\sum\\ell\\) растёт линейно. ${Q.length} точек × 3 повтора; медиана decode-шага, усы — min…max по повторам. ` +
+    `Средняя \\(|e|\\) медианного шага ${pct(Lc.decode_grid.mean_abs_e)}. Это и есть ответ на вопрос «N запросов разом»: \\(N = B\\) от 1 до 160.`);
+  row = chartRow(s);
+  const qHover = (r) => `L ${int(r.L)}, B ${r.B}<br>шаг ${num(r.T * 1e3, 4)} мс (${num(r.T_min * 1e3, 4)}…${num(r.T_max * 1e3, 4)}), модель ${num(r.T_hat * 1e3, 4)} мс<br>e ${pct(r.e)}<br>OTPS ${int(r.otps)}, модель ${int(r.otps_hat)}`;
+  chart(row, () => [measuredAndModel(groupBy(Q, "L"), "B", "T", "T_hat", (k) => `L ${int(k)}`, qHover),
+    baseLayout("Decode-шаг от B", "B, запросов в шаге", "T<sub>dc</sub>, с (медиана)", { xaxis: logAxis("B, запросов в шаге", true) })], true);
+  chart(row, () => [measuredAndModel(groupBy(Q, "L"), "B", "otps", "otps_hat", (k) => `L ${int(k)}`, qHover),
+    baseLayout("Выходных токенов в секунду: B / T_dc", "B, запросов в шаге", "OTPS, ток/с", { xaxis: logAxis("B, запросов в шаге", true) })], true);
+  table(s, Q, [
+    { label: "L", key: "L", fmt: int }, { label: "B", key: "B" }, { label: "повторов", key: "n" },
+    { label: "шаг, мс", key: "T", fmt: (v) => num(v * 1e3, 4) }, { label: "модель, мс", key: "T_hat", fmt: (v) => num(v * 1e3, 4) },
+    { label: "e", key: "e", fmt: (v) => pct(v) }, { label: "OTPS", key: "otps", fmt: int }, { label: "OTPS модель", key: "otps_hat", fmt: int },
+  ], true);
+
+  // S3: prefill-share mixes.
+  const M = Lc.mixes;
+  s = section("Доля prefill: смеси S3 (test)",
+    "Закрытые батчи из N одинаковых запросов, все при t = 0. Длина генерации O подобрана по коэффициентам фазы A так, чтобы prefill занимал 10…90% времени шагов. " +
+    `Модель на них не подбиралась — это test. Фактическая доля отличается от заданной на ${pct(M.share_dev_median)} (медиана |Δ|).`);
+  row = chartRow(s);
+  const ns = uniq(M.runs.map((r) => r.N));
+  const byN = (x, y, hover) => ns.map((n, i) => {
+    const sub = M.runs.filter((r) => r.N === n);
+    return { type: "scatter", mode: "markers", name: `N = ${n}`, x: sub.map((r) => r[x]), y: sub.map((r) => r[y]),
+      marker: { color: seqColor(i, ns.length), size: 7, symbol: sub.map((r) => (r.cache === "on" ? "diamond" : "circle")), line: { width: 1, color: css("--bg") } },
+      text: sub.map(hover), hovertemplate: "%{text}<extra></extra>" };
+  });
+  const mHover = (r) => `${r.run_id} · N ${r.N}, L ${r.L}, O ${r.O_req}, кэш ${r.cache}<br>доля prefill: цель ${pct(r.target, 0)}, замер ${pct(r.share)}, модель ${pct(r.share_hat)}<br>e T_total ${pct(r.rel_err)}`;
+  chart(row, () => { const t = byN("target", "share", mHover); t.push(identityLine([0, 1], [0, 1])); return [t, baseLayout("Заданная и фактическая доля prefill", "заданная доля", "фактическая доля (Σ prefill-шагов / Σ шагов)", { xaxis: { ...baseLayout().xaxis, tickformat: ".0%", title: { text: "заданная доля" } }, yaxis: { ...baseLayout().yaxis, tickformat: ".0%", title: { text: "фактическая доля" } } })]; }, true);
+  chart(row, () => [byN("share", "rel_err", mHover), errLayout("Ошибка T_total от доли prefill", "фактическая доля prefill", "e T_total")], true);
+  s.append(el("p", { class: "lede" }, "Ромб — с кэшем (общий префикс, R ≈ 0,5), круг — без кэша."));
+  row = chartRow(s);
+  table(row, M.by_n, [
+    { label: "N", key: "N" }, { label: "прогонов", key: "n" }, { label: "|e| T_total", key: "mean_abs", fmt: (v) => pct(v) },
+    { label: "средний знак", key: "mean_signed", fmt: signed }, { label: "доля − цель", key: "share_dev", fmt: (v) => (v > 0 ? "+" : "") + pct(v) },
+  ]);
+  table(row, M.by_target, [
+    { label: "цель", key: "target", fmt: (v) => pct(v, 0) }, { label: "прогонов", key: "n" }, { label: "доля: замер", key: "share", fmt: (v) => pct(v) },
+    { label: "доля: модель", key: "share_hat", fmt: (v) => pct(v) }, { label: "|e| T_total", key: "mean_abs", fmt: (v) => pct(v) }, { label: "средний знак", key: "mean_signed", fmt: signed },
+  ]);
+
+  // S4: arrivals.
+  const A = Lc.arrivals;
+  s = section("Поток запросов: S4 (перенос)",
+    `${A.requests_per_run} запросов на прогон приходят по Пуассону с интенсивностью \\(\\rho\\) от ёмкости ${num(A.capacity_rps, 3)} запросов/с; длины как в prefix_sweep, у запросов 4 семьи общих префиксов. ` +
+    "Ёмкость посчитана до сбора (local_grid._s4) по ценам формулы 5 с коэффициентами фазы A: \\(1 / (\\tilde a \\bar L + \\tilde b \\bar O)\\), \\(\\tilde a\\) — для одного запроса средней длины \\(\\bar L = 2305\\) без кэша (\\(R = 0\\), и в вариантах с кэшем тоже), \\(\\tilde b\\) — для decode-шага с \\(B = 16\\) и \\(\\ell = \\bar L + \\bar O/2\\). Это не измеренный потолок: у fixed_batch батч не больше 8, а с кэшем prefill дешевле, поэтому реальный излом у вариантов разный (ниже). " +
+    "fixed_batch — волнами по 8: новая волна ждёт конца предыдущей. TTFT по модели — предсказанные шаги от прихода запроса до его первого токена по расписанию трассы (ожидание из трассы, модель очереди ещё не построена).");
+  row = chartRow(s);
+  const combos = [...new Set(A.table.map((r) => `${r.scheduler}|${r.cache}`))];
+  chart(row, () => {
+    const traces = [];
+    combos.forEach((key) => {
+      const [sched, cache] = key.split("|"), sub = A.table.filter((r) => r.scheduler === sched && r.cache === cache).sort((a, b) => a.rho - b.rho);
+      const color = cacheColor(cache);
+      traces.push({ type: "scatter", mode: "markers+lines", name: `${sched} · кэш ${cache} · замер`, x: sub.map((r) => r.rho), y: sub.map((r) => r.ttft),
+        line: { color, width: 1.5, dash: sched.startsWith("fixed") ? "dot" : "solid" }, marker: { color, symbol: schedSymbol(sched), size: 9 },
+        text: sub.map((r) => `ρ ${r.rho}, ${sched}, кэш ${cache}<br>TTFT медиана: замер ${num(r.ttft, 3)} с, модель ${num(r.ttft_hat, 3)} с<br>p90 ${num(r.ttft_p90, 3)} с`), hovertemplate: "%{text}<extra></extra>" });
+      traces.push({ type: "scatter", mode: "markers", name: `${sched} · кэш ${cache} · модель`, x: sub.map((r) => r.rho), y: sub.map((r) => r.ttft_hat),
+        marker: { color, symbol: schedSymbol(sched) + "-open", size: 12, line: { width: 1.5, color } }, showlegend: false, hoverinfo: "skip" });
+    });
+    return [traces, baseLayout("TTFT (медиана) от нагрузки", "ρ — доля пропускной способности по модели", "TTFT, с", { yaxis: { ...baseLayout().yaxis, type: "log", title: { text: "TTFT, с (лог)" } } })];
+  }, true);
+  chart(row, () => {
+    const traces = combos.map((key) => {
+      const [sched, cache] = key.split("|"), sub = A.runs.filter((r) => r.scheduler === sched && r.cache === cache);
+      return { type: "scatter", mode: "markers", name: `${sched} · кэш ${cache}`, x: sub.map((r) => r.offered_rps), y: sub.map((r) => r.achieved_rps),
+        marker: { color: cacheColor(cache), symbol: schedSymbol(sched), size: 9, line: { width: 1, color: css("--bg") } },
+        text: sub.map((r) => `${r.run_id}<br>предложено ${num(r.offered_rps, 3)}, обслужено ${num(r.achieved_rps, 3)} запросов/с<br>e T_total ${pct(r.rel_err)}`), hovertemplate: "%{text}<extra></extra>" };
+    });
+    traces.push(identityLine(A.runs.map((r) => r.offered_rps), A.runs.map((r) => r.offered_rps)));
+    return [traces, baseLayout("Предложенная и обслуженная нагрузка", "предложено, запросов/с", "обслужено = запросов / T^wall")];
+  }, true);
+  table(s, A.table, [
+    { label: "ρ", key: "rho" }, { label: "планировщик", key: "scheduler", text: true }, { label: "кэш", key: "cache" }, { label: "прогонов", key: "n" },
+    { label: "предложено, зап/с", key: "offered_rps", fmt: (v) => num(v, 3) }, { label: "обслужено, зап/с", key: "achieved_rps", fmt: (v) => num(v, 3) },
+    { label: "TTFT замер, с", key: "ttft", fmt: (v) => num(v, 3) }, { label: "TTFT модель, с", key: "ttft_hat", fmt: (v) => num(v, 3) },
+    { label: "TTFT p90, с", key: "ttft_p90", fmt: (v) => num(v, 3) }, { label: "e T_total", key: "rel_err", fmt: (v) => pct(v) },
+  ], true);
+  s.append(el("h3", {}, "TTPS–TTFT в открытом потоке"));
+  s.append(el("p", { class: "lede" }, el("strong", {}, "Открытый поток: за изломом точки показывают очередь, а не работу модели. "),
+    `Точки, где обслужено меньше ${pct(A.stationary_share, 0)} предложенного, затенены: там очередь растёт весь прогон и TTFT зависит от длины прогона. Кривая TTPS–TTFT по конкурентности — в разделе S5 и в «Итоговых графиках». Линии — по возрастанию ρ для каждой пары (планировщик, кэш), подпись — ρ; модель — пунктир с полыми точками.`));
+  row = chartRow(s);
+  chart(row, s4TtpsChart("ttft", "ttft_hat", "S4: TTPS от медианы TTFT по ρ", "TTFT, с (медиана, лог)"), true);
+  chart(row, s4TtpsChart("ttft_p90", "ttft_hat_p90", "S4: TTPS от p90 TTFT по ρ", "TTFT, с (p90, лог)"), true);
+  renderKnee(s);
+  if (Lc.closed_loop) renderClosedLoop();
+
+  // S0: the server matrix on this GPU.
+  const Sv = Lc.server;
+  s = section("Та же нагрузка, что на сервере: S0",
+    `48 прогонов серверной матрицы Qwen3-0.6B (6 наборов × 2 зерна × 4 условия, max_num_seqs = 8) на этой GPU. Здесь прогон в ${num(1 / Sv.ratio_median, 3)} раза быстрее (медиана отношения ${num(Sv.ratio_median, 3)}): TP = 1 без обмена между GPU, ` +
+    "своя машина без чужих задач. Ошибка — модели этой GPU без подгонки на S0.");
+  row = chartRow(s);
+  chart(row, () => {
+    const conds = [...new Set(Sv.runs.map((r) => r.condition_id))].sort();
+    const traces = conds.map((cId) => {
+      const sub = Sv.runs.filter((r) => r.condition_id === cId);
+      return { type: "scatter", mode: "markers", name: `${cId}: кэш ${sub[0].cache} · ${sub[0].scheduler}`, x: sub.map((r) => r.server_wall), y: sub.map((r) => r.wall_seconds),
+        marker: { color: cacheColor(sub[0].cache), symbol: schedSymbol(sub[0].scheduler), size: 9, line: { width: 1, color: css("--bg") } },
+        text: sub.map((r) => `${r.run_id} = сервер ${r.server_run_id}<br>сервер ${num(r.server_wall, 4)} с, здесь ${num(r.wall_seconds, 4)} с (×${num(r.ratio, 3)})<br>e модели ${pct(r.rel_err)}`), hovertemplate: "%{text}<extra></extra>" };
+    });
+    const xs = Sv.runs.map((r) => r.server_wall), hi = Math.max(...xs);
+    traces.push({ type: "scatter", mode: "lines", name: `y = ${num(Sv.ratio_median, 3)} x`, x: [0, hi], y: [0, hi * Sv.ratio_median], line: { color: css("--muted"), dash: "dash", width: 1 }, hoverinfo: "skip" });
+    return [traces, baseLayout("Время прогона: сервер и эта GPU", "сервер (2× RTX A4000, TP = 2), с", "эта GPU, с")];
+  }, true);
+  table(s, Sv.by_condition, [
+    { label: "условие", key: "condition_id" }, { label: "кэш", key: "cache" }, { label: "планировщик", key: "scheduler", text: true },
+    { label: "прогонов", key: "n" }, { label: "здесь / сервер", key: "ratio", fmt: (v) => num(v, 3) }, { label: "e модели (среднее)", key: "e", fmt: (v) => pct(v) },
+  ]);
+}
+
+const signShort = (v) => (v == null ? "—" : (v > 0 ? "+" : "") + pct(v));
+const partName = (r) => `${sourceLabel(r.source)} · ${PART_LABEL[r.part] ?? r.part}`;
+
+// Prefill and decode checks on every data set of the model.
+function renderChecks() {
+  const P = D.prefill_checks;
+  let s = section("Prefill: проверки на всех данных",
+    "Одиночный запрос без кэша, модель без кэша на шагах с кэшем, несколько запросов в одном шаге и шаги с малым числом новых токенов. Модель и коэффициенты — основные, кроме проверки кэша.");
+  let row = chartRow(s);
+  chart(row, () => {
+    const t = scatterByPart(P.single, "L_sum", "T", (r) => `${r.run_id} · ${sourceLabel(r.source)}<br>L ${int(r.L_sum)}<br>T ${num(r.T, 4)} с, модель ${num(r.pred, 4)} с`);
+    t.push({ type: "scatter", mode: "lines", name: "модель: aL + bL² + c", x: P.curve.L, y: P.curve.T, line: { color: css("--fg"), width: 2 }, hoverinfo: "skip" });
+    return [t, baseLayout(`Один запрос, R = 0: T(L) (${int(P.single_n)} шагов)`, "L, токены", "T<sub>pf</sub>, с", { xaxis: logAxis("L, токены"), yaxis: { ...baseLayout().yaxis, type: "log", title: { text: "T_pf, с" } } })];
+  }, true);
+  if (P.multi.length) {
+    const groups = groupBy(P.multi, "L");
+    const mHover = (r) => `${sourceLabel(r.source)} · L ${int(r.L)}, k ${r.k}<br>T ${num(r.T, 4)} с, модель ${num(r.pred, 4)} с<br>T/k ${num(r.T_per, 4)} с, модель ${num(r.pred_per, 4)} с<br>шагов ${r.n}`;
+    chart(row, () => [measuredAndModel(groupBy(P.multi, "L"), "k", "T", "pred", (k) => `L ${int(k)}`, mHover),
+      baseLayout("k одинаковых запросов в шаге: T", "k, запросов в шаге", "T<sub>pf</sub>, с (медиана)", { xaxis: logAxis("k, запросов в шаге", true), yaxis: { ...baseLayout().yaxis, type: "log", title: { text: "T_pf, с" } } })], true);
+    chart(row, () => [measuredAndModel(groups, "k", "T_per", "pred_per", (k) => `L ${int(k)}`, mHover),
+      baseLayout("k одинаковых запросов в шаге: T / k", "k, запросов в шаге", "T / k, с на запрос", { xaxis: logAxis("k, запросов в шаге", true), yaxis: { ...baseLayout().yaxis, type: "log", title: { text: "T / k, с" } } })], true);
+  } else s.append(el("p", { class: "lede" }, "Шагов с несколькими запросами одной длины без кэша в этих данных нет — зависимость от k не проверить."));
+  s.append(el("h3", {}, "Кэш: модель без кэша на шагах с кэшем"));
+  if (P.cache) {
+    s.append(el("p", { class: "lede" }, `Модель A подобрана заново (NNLS) только на шагах train-набора без попаданий в кэш (\\(R_{\\text{кэш}} = 0\\); готовый KV своего куска допускается): ${coefText(P.cache.coef)}. ` +
+      "Ею предсказаны все шаги с \\(R_{\\text{кэш}} > 0\\). Если формула \\(L(1 - R)\\), \\(L^2(1 - R^2)\\) верно описывает кэш, ошибка здесь такая же, как без кэша. Ячейка — средняя \\(e\\) и число шагов; \\(L\\) — средняя длина запроса в шаге."));
+    table(s, P.cache.by_source, [
+      { label: "данные", value: (r) => sourceLabel(r.source), text: true }, { label: "шагов", key: "n", fmt: int },
+      { label: "средняя |e|", key: "mean_abs", fmt: (v) => pct(v) }, { label: "медиана |e|", key: "median_abs", fmt: (v) => pct(v) }, { label: "средний знак", key: "mean_signed", fmt: signed },
+    ]);
+    for (const src of (D.sources || []).map((x) => x.id).filter((id) => P.cache.table.some((r) => r.source === id))) {
+      const sub = P.cache.table.filter((r) => r.source === src);
+      const rBins = [...new Set(sub.map((r) => r.R_bin))].sort(), lBins = [...new Set(sub.map((r) => r.L_bin))].sort((a, b) => parseInt(a) - parseInt(b));
+      s.append(el("p", {}, el("strong", {}, sourceLabel(src))));
+      table(s, lBins.map((lb) => ({ lb, cells: Object.fromEntries(sub.filter((r) => r.L_bin === lb).map((r) => [r.R_bin, r])) })), [
+        { label: "L \\ R_кэш", key: "lb", text: true },
+        ...rBins.map((rb) => ({ label: rb, value: (row) => { const c = row.cells[rb]; return c ? `${signShort(c.e)} (${c.n})` : "—"; } })),
+      ]);
+    }
+  } else s.append(el("p", { class: "lede" }, "Нет данных: попаданий в кэш префиксов здесь нет (\\(R_{\\text{кэш}} = 0\\) у всех шагов). Готовый KV своего куска (\\(R_{\\text{нарезка}}\\)) проверяется в разделе ошибок от L и R."));
+  s.append(el("h3", {}, `Шаги, где новых токенов меньше ${P.small_threshold}`));
+  if (P.small.length) {
+    s.append(el("p", { class: "lede" }, `${int(P.small_n)} шагов: в шаге почти нечего считать (запрос почти целиком в кэше, короткий хвост куска). Модель даёт почти постоянную \\(c\\); замер показывает, сколько стоит такой шаг на деле.`));
+    row = chartRow(s);
+    chart(row, () => {
+      const t = scatterByPart(P.small, "new", "T", (r) => `${r.run_id} · ${sourceLabel(r.source)}<br>новых ${r.new}, k ${r.k}, L ${int(r.L_sum)}, R_кэш ${num(r.R_cache, 3)}<br>T ${num(r.T * 1e3, 4)} мс, модель ${num(r.pred * 1e3, 4)} мс`);
+      t.push({ type: "scatter", mode: "markers", name: "модель", x: P.small.map((r) => r.new), y: P.small.map((r) => r.pred), marker: { color: css("--fg"), symbol: "line-ew-open", size: 10, line: { width: 2, color: css("--fg") } }, hoverinfo: "skip" });
+      return [t, baseLayout("Время шага от числа новых токенов", "новых токенов в шаге", "T<sub>pf</sub>, с", { yaxis: { ...baseLayout().yaxis, type: "log", title: { text: "T_pf, с (лог)" } } })];
+    }, true);
+  } else s.append(el("p", { class: "lede" }, "Таких шагов нет."));
+
+  s = section("Decode: проверки на всех данных",
+    "Сетка средняя длина контекста \\(\\bar\\ell = \\sum\\ell / B\\) (полосы по степеням двойки) × \\(B\\): медианы замера и модели и средняя \\(e\\) по всем decode-шагам. Ниже — время шага от \\(\\sum\\ell\\), цвет — \\(B\\) (выборка до 2500 шагов на набор).");
+  const srcOrder = (id) => (D.sources || []).findIndex((x) => x.id === id);
+  table(s, [...D.decode_checks].sort((a, b) => srcOrder(a.source) - srcOrder(b.source)), [
+    { label: "данные", value: partName, text: true }, { label: "ℓ̄", key: "ell_bin" }, { label: "B", key: "B_band" }, { label: "шагов", key: "n", fmt: int },
+    { label: "замер, мс", key: "T", fmt: (v) => num(v * 1e3, 4) }, { label: "модель, мс", key: "pred", fmt: (v) => num(v * 1e3, 4) }, { label: "e (среднее)", key: "e", fmt: signShort },
+  ], true);
+  row = chartRow(s);
+  for (const src of D.sources || []) {
+    const pts = D.decode_sample.filter((r) => r.source === src.id && r.part !== "unused");
+    if (!pts.length) continue;
+    chart(row, () => {
+      const bmax = Math.max(...pts.map((r) => r.B));
+      // Rare step outliers (see «Качество данных») would flatten the cloud: cap the axis at 1.5 × p99.
+      const ts = pts.map((r) => r.T * 1e3).sort((a, b) => a - b), top = ts[Math.floor(0.99 * (ts.length - 1))] * 1.5;
+      return [[{ type: "scatter", mode: "markers", name: "замер", x: pts.map((r) => r.sum_l), y: pts.map((r) => r.T * 1e3),
+        marker: { size: 5, opacity: 0.7, color: pts.map((r) => Math.log2(r.B)), cmin: 0, cmax: Math.max(1, Math.log2(bmax)),
+          colorscale: [[0, isDark() ? "hsl(212, 75%, 38%)" : "hsl(212, 70%, 80%)"], [1, isDark() ? "hsl(212, 75%, 85%)" : "hsl(212, 70%, 25%)"]],
+          colorbar: { title: { text: "B", font: { size: 11, color: css("--muted") } }, tickvals: [0, 1, 2, 3, 4, 5, 6, 7].filter((v) => v <= Math.log2(bmax) + 0.01), ticktext: ["1", "2", "4", "8", "16", "32", "64", "128"], outlinewidth: 0, tickfont: { color: css("--muted") } } },
+        text: pts.map((r) => `${r.run_id}<br>B ${r.B}, Σℓ ${int(r.sum_l)}<br>T ${num(r.T * 1e3, 4)} мс, модель ${num(r.pred * 1e3, 4)} мс`), hovertemplate: "%{text}<extra></extra>" }],
+        baseLayout(`Decode-шаг от Σℓ: ${src.label}`, "Σℓ, токены", "T<sub>dc</sub>, мс", { showlegend: false, yaxis: { ...baseLayout().yaxis, range: [0, top], title: { text: "T_dc, мс (выше 1,5 × p99 — выбросы, не показаны)" } } })];
+    }, true);
+  }
+}
+
+// Data quality: time outside steps, step outliers, repeats and drift.
+function renderQuality() {
+  const Q = D.quality;
+  const s = section("Качество данных",
+    "Время вне шагов: \\(1 - \\sum T_{\\text{шагов}} / T^{\\mathrm{wall}}\\) — промежутки между шагами и время до и после цикла, которые модель не описывает. Выбросы — шаги намного дольше своих соседей." +
+    (D.local ? " Для локальных данных — ещё разброс одинаковых повторов и дрейф эталонного прогона. У потока S4 время вне шагов — в основном простой GPU между приходами запросов, так и задумано." : ""));
+  let row = chartRow(s);
+  chart(row, () => [scatterByPart(Q.off_steps, "wall_seconds", "off_share", (r) => `${r.run_id} · ${sourceLabel(r.source)}<br>T^wall ${num(r.wall_seconds, 4)} с, шаги ${num(r.steps_seconds, 4)} с<br>вне шагов ${pct(r.off_share, 2)}`),
+    baseLayout("Доля времени вне шагов от длительности прогона", "T^wall, с (лог)", "1 − Σ T_шагов / T^wall", { xaxis: logAxis("T^wall, с (лог)"), yaxis: { ...baseLayout().yaxis, tickformat: ".1%", title: { text: "1 − Σ T_шагов / T^wall" } } })], true);
+  if (D.local) {
+    const Lc = D.local;
+    chart(row, () => {
+      const runs = Lc.reference.runs;
+      const traces = ["A", "B"].map((p, i) => {
+        const sub = runs.filter((r) => r.phase === p);
+        return { type: "scatter", mode: "markers", name: `фаза ${p}`, x: sub.map((r) => r.minutes), y: sub.map((r) => r.wall),
+          marker: { color: css(i ? "--m3" : "--m1"), size: 8, line: { width: 1, color: css("--bg") } }, text: sub.map((r) => `${r.run_id}<br>${num(r.wall, 4)} с`), hovertemplate: "%{text}<extra></extra>" };
+      });
+      return [traces, baseLayout("Дрейф: эталонный прогон REF за весь сбор", "минуты от первого REF", "T<sup>wall</sup>, с")];
+    }, true);
+    s.append(el("h3", {}, "Разброс одинаковых повторов"));
+    table(s, Lc.repeat_spread, [
+      { label: "серия", key: "series", text: true }, { label: "что сравнивается", key: "what", text: true }, { label: "точек", key: "points" },
+      { label: "(max − min) / медиана: медиана", key: "median", fmt: (v) => pct(v, 2) }, { label: "p90", key: "p90", fmt: (v) => pct(v, 2) }, { label: "максимум", key: "max", fmt: (v) => pct(v, 1) },
+    ]);
+    const reps = Lc.prefill_grid.repeats || [];
+    if (reps.length) {
+      const slow = (id) => reps.filter((r) => r.point_id === id && r.prefill_seconds > 0.1).length;
+      const worst = [...new Set(reps.map((r) => r.point_id))].sort((a, b) => slow(b) - slow(a))[0];
+      s.append(el("p", {}, `Точки S1, где повторы расходятся больше чем вдвое — все с \\(R \\approx 1\\): в шаге считается один новый токен. Каждый повтор отдельно. ` +
+        `Хуже всех ${worst}: долгий шаг (> 0,1 с) в ${slow(worst)} повторах из ${reps.filter((r) => r.point_id === worst).length}, поэтому у неё и медиана ~0,3 с; у остальных — в одном повторе.`));
+      table(s, [...reps].sort((a, b) => slow(b.point_id) - slow(a.point_id) || a.point_id.localeCompare(b.point_id)), [
+        { label: "точка", key: "point_id", text: true, mono: true }, { label: "прогон", key: "run_id", mono: true }, { label: "L", key: "L", fmt: int },
+        { label: "R", key: "R", fmt: (v) => num(v, 4) }, { label: "prefill-шагов", key: "n_prefill_steps" },
+        { label: "T_pf, мс", key: "prefill_seconds", fmt: (v) => num(v * 1e3, 4) }, { label: "модель, мс", key: "prefill_hat", fmt: (v) => num(v * 1e3, 4) },
+      ], true);
+    }
+  }
+  const Sp = Q.spikes;
+  s.append(el("h3", {}, "Выбросы decode-шагов"));
+  s.append(el("p", { class: "lede" }, `Шаг дольше ${Sp.seconds} с и в ${Sp.ratio} раз медианы своего прогона при том же B. Доля времени — сколько выбросы добавили к сумме decode-шагов.`));
+  table(s, Sp.by_source, [
+    { label: "данные", key: "source", text: true }, { label: "decode-шагов", key: "steps", fmt: int }, { label: "выбросов", key: "spikes", fmt: int },
+    { label: "доля шагов", key: "rate", fmt: (v) => pct(v, 3) }, { label: "прогонов с выбросом", value: (r) => `${r.runs_with_spike} из ${r.runs}` },
+    { label: "медиана, с", key: "T_median", fmt: (v) => num(v, 3) }, { label: "максимум, с", key: "T_max", fmt: (v) => num(v, 3) }, { label: "доля времени", key: "time_share", fmt: (v) => pct(v, 2) },
+    { label: "из них первый decode-шаг", key: "first_step_share", fmt: (v) => pct(v, 0) }, { label: "из них B = 1", key: "B1_share", fmt: (v) => pct(v, 0) },
+  ]);
+  if (Sp.top.length) table(s, Sp.top, [
+    { label: "данные", key: "source", text: true }, { label: "прогон", key: "run_id", mono: true }, { label: "шаг", key: "step_index" }, { label: "B", key: "B" }, { label: "Σℓ", key: "sum_l", fmt: int },
+    { label: "T, с", key: "T", fmt: (v) => num(v, 3) }, { label: "медиана прогона, мс", key: "base", fmt: (v) => num(v * 1e3, 3) },
+  ]);
+}
+
+// S4 past the knee: non-stationary points, TTFT along the run, the model's
+// saturation throughput and the TPOT split of upstream_dynamic without cache.
+// S4: one line per (scheduler, cache) over ρ; dashed line with open markers —
+// model. Points past the knee (served < 95% of offered) are shaded: a queue.
+function s4TtpsChart(xKey, xHatKey, title, xTitle) {
+  return () => {
+    const A = D.local.arrivals;
+    const knee = new Map(A.table.map((r) => [`${r.rho}|${r.scheduler}|${r.cache}`, r]));
+    const isLate = (g) => knee.get(`${g.rho}|${g.scheduler}|${g.cache}`)?.stationary === false;
+    const s4 = (D.request_groups || []).filter((g) => g.ttps != null && g.rho != null);
+    const traces = [];
+    for (const key of [...new Set(s4.map((g) => `${g.scheduler}|${g.cache}`))]) {
+      const [sched, cache] = key.split("|");
+      const sub = s4.filter((g) => g.scheduler === sched && g.cache === cache).sort((a, b) => a.rho - b.rho);
+      const color = cacheColor(cache), symbol = schedSymbol(sched), name = `${sched} · кэш ${cache}`;
+      const op = sub.map((g) => (isLate(g) ? 0.25 : 1));
+      const text = sub.map((g) => `${name} · ρ ${g.rho}${isLate(g) ? " — за изломом: очередь, а не работа модели" : ""}<br>${g.n} запросов в ${g.runs} прогонах<br>TTFT медиана: замер ${num(g.ttft, 3)} с, модель ${num(g.ttft_hat, 3)} с<br>TTFT p90: замер ${num(g.ttft_p90, 3)} с, модель ${num(g.ttft_hat_p90, 3)} с<br>TTPS: замер ${num(g.ttps, 3)}, модель ${num(g.ttps_hat, 3)} ток/с`);
+      traces.push({ type: "scatter", mode: "lines+markers+text", name: `${name} · замер`, legendgroup: key, x: sub.map((g) => g[xKey]), y: sub.map((g) => g.ttps),
+        text: sub.map((g) => `ρ ${g.rho}`), textposition: "top center", textfont: { size: 10, color: css("--muted") }, customdata: text, hovertemplate: "%{customdata}<extra></extra>",
+        line: { color, width: 1.5, dash: sched.startsWith("fixed") ? "dot" : "solid" }, opacity: 0.85, marker: { color, symbol, size: 10, opacity: op, line: { width: 1, color: css("--bg") } } });
+      traces.push({ type: "scatter", mode: "lines+markers", name: `${name} · модель`, legendgroup: key, showlegend: false, x: sub.map((g) => g[xHatKey]), y: sub.map((g) => g.ttps_hat),
+        customdata: text, hovertemplate: "%{customdata}<extra></extra>", line: { color, width: 1, dash: "dash" }, marker: { color, symbol: symbol + "-open", size: 10, opacity: op, line: { width: 1.5, color } } });
+    }
+    traces.push({ type: "scatter", mode: "markers", name: "затенено — за изломом, нестационарно", x: [null], y: [null], marker: { color: css("--muted"), size: 10, opacity: 0.25 } });
+    traces.push({ type: "scatter", mode: "lines+markers", name: "модель (пунктир, полые точки)", x: [null], y: [null], line: { color: css("--muted"), dash: "dash" }, marker: { color: css("--muted"), symbol: "circle-open", size: 9 } });
+    return [traces, baseLayout(title, xTitle, "TTPS = 1 / TPOT, ток/с (медиана)", { xaxis: { ...baseLayout().xaxis, type: "log", title: { text: xTitle } } })];
+  };
+}
+
+// S5 closed loop: one line per variant (scheduler, cache) over N.
+const s5Variants = () => { const T = D.local.closed_loop.table; return [...new Set(T.map((r) => `${r.scheduler}|${r.cache}`))].map((k) => k.split("|")); };
+const s5Rows = (sched, cache) => D.local.closed_loop.table.filter((r) => r.scheduler === sched && r.cache === cache).sort((a, b) => a.N - b.N);
+const s5Name = (sched, cache) => `${sched} · кэш ${cache}`;
+const s5Line = (sched) => (sched.startsWith("fixed") ? "dot" : "solid");
+function s5Hover(r) {
+  return `${s5Name(r.scheduler, r.cache)} · N ${r.N} (${r.n} повт.)<br>RPS ${num(r.rps, 3)} ± ${num(r.rps_sd, 2)}, модель ${num(r.rps_hat, 3)}<br>ITPS новые ${int(r.itps)}, все ${int(r.itps_all)} · OTPS ${int(r.otps)}<br>` +
+    `TTFT медиана ${num(r.ttft, 3)} с (модель ${num(r.ttft_hat, 3)}), p90 ${num(r.ttft_p90, 3)} с<br>TTPS ${num(r.ttps, 3)} (модель ${num(r.ttps_hat, 3)}) ток/с<br>батч ${num(r.batch, 3)}, KV ${pct(r.kv_max)}, вытеснений ${num(r.preempted, 3)}`;
+}
+function s5TtpsChart(xKey, xHatKey, title, xTitle) {
+  return () => {
+    const traces = [];
+    for (const [sched, cache] of s5Variants()) {
+      const sub = s5Rows(sched, cache), color = cacheColor(cache), symbol = schedSymbol(sched), key = `${sched}|${cache}`;
+      traces.push({ type: "scatter", mode: "lines+markers+text", name: `${s5Name(sched, cache)} · замер`, legendgroup: key, x: sub.map((r) => r[xKey]), y: sub.map((r) => r.ttps),
+        text: sub.map((r) => `N ${r.N}`), textposition: "top center", textfont: { size: 10, color: css("--muted") }, customdata: sub.map(s5Hover), hovertemplate: "%{customdata}<extra></extra>",
+        line: { color, width: 2, dash: s5Line(sched) }, marker: { color, symbol, size: 10, line: { width: 1, color: css("--bg") } } });
+      traces.push({ type: "scatter", mode: "lines+markers", name: `${s5Name(sched, cache)} · модель`, legendgroup: key, showlegend: false, x: sub.map((r) => r[xHatKey]), y: sub.map((r) => r.ttps_hat),
+        customdata: sub.map(s5Hover), hovertemplate: "%{customdata}<extra></extra>", line: { color, width: 1.5, dash: "dash" }, marker: { color, symbol: symbol + "-open", size: 10, line: { width: 1.5, color } } });
+    }
+    traces.push({ type: "scatter", mode: "lines+markers", name: "модель (пунктир, полые точки)", x: [null], y: [null], line: { color: css("--muted"), dash: "dash" }, marker: { color: css("--muted"), symbol: "circle-open", size: 9 } });
+    return [traces, baseLayout(title, xTitle, "TTPS = 1 / TPOT, ток/с (медиана)", { xaxis: { ...baseLayout().xaxis, type: "log", title: { text: xTitle } } })];
+  };
+}
+// y(N) for each variant: measured with spread over the seeds, model dashed;
+// a vertical mark at the N where the KV cache fills (preemption or ≥ 95%).
+function s5ByN(key, title, yTitle, model = true) {
+  return () => {
+    const CL = D.local.closed_loop, traces = [], shapes = [], ann = [];
+    for (const [sched, cache] of s5Variants()) {
+      const sub = s5Rows(sched, cache), color = cacheColor(cache), symbol = schedSymbol(sched), g = `${sched}|${cache}`;
+      const sd = sub.map((r) => r[key + "_sd"]);
+      traces.push({ type: "scatter", mode: "lines+markers", name: `${s5Name(sched, cache)} · замер`, legendgroup: g, x: sub.map((r) => r.N), y: sub.map((r) => r[key]),
+        error_y: sd.some((v) => v != null) ? { type: "data", array: sd.map((v) => v ?? 0), color, thickness: 1, width: 3 } : undefined,
+        customdata: sub.map(s5Hover), hovertemplate: "%{customdata}<extra></extra>", line: { color, width: 2, dash: s5Line(sched) }, marker: { color, symbol, size: 9, line: { width: 1, color: css("--bg") } } });
+      if (model && sub[0][key + "_hat"] !== undefined) traces.push({ type: "scatter", mode: "lines+markers", name: `${s5Name(sched, cache)} · модель`, legendgroup: g, showlegend: false, x: sub.map((r) => r.N), y: sub.map((r) => r[key + "_hat"]),
+        hoverinfo: "skip", line: { color, width: 1.5, dash: "dash" }, marker: { color, symbol: symbol + "-open", size: 9, line: { width: 1.5, color } } });
+      const v = CL.variants.find((x) => x.scheduler === sched && x.cache === cache);
+      if (v?.n_kv != null) {
+        // On a log axis shapes take the data value, annotations its log10.
+        shapes.push({ type: "line", xref: "x", yref: "paper", x0: v.n_kv, x1: v.n_kv, y0: 0, y1: 1, line: { color, width: 1, dash: "dot" } });
+        ann.push({ xref: "x", yref: "paper", x: Math.log10(v.n_kv), y: 1 - 0.08 * ann.length, xanchor: "right", yanchor: "top", showarrow: false, text: `KV полон · кэш ${cache}`, font: { size: 10, color: css("--muted") } });
+      }
+    }
+    if (model) traces.push({ type: "scatter", mode: "lines+markers", name: "модель (пунктир, полые точки)", x: [null], y: [null], line: { color: css("--muted"), dash: "dash" }, marker: { color: css("--muted"), symbol: "circle-open", size: 9 } });
+    return [traces, baseLayout(title, "N — запросов в системе (лог₂)", yTitle, { xaxis: logAxis("N — запросов в системе (лог₂)", true), shapes, annotations: ann })];
+  };
+}
+function renderClosedLoop() {
+  const CL = D.local.closed_loop, V = CL.variants;
+  const s = section("S5: конкурентность (закрытый цикл)",
+    `В системе всё время ровно N запросов: новый подаётся сразу после завершения одного из N. Первые 20 завершённых — прогрев, следующие 200 (60 при N = 1) — замер; хвост, когда новых запросов нет и N убывает, в метрики не входит. ` +
+    "Нагрузка — как в S4 (длины 513–4096, выход 16–256, 4 семьи общих префиксов), порядок запросов из пула одинаковый для всех N, 3 повтора с разными пулами (среднее ± std). Набор для переноса: ничего не подбирается, коэффициенты — модели. " +
+    "Не снимались fixed_batch с кэшем и N = 48 — бюджет 2,5 ч; N = 1 и N = 24–32 — только у upstream_dynamic.");
+  const bad = CL.table.filter((r) => r.exact_n_min < CL.exact_n_required);
+  s.append(el("p", {}, el("strong", {}, bad.length
+    ? `Цикл не везде закрытый: доля времени замера с ровно N запросами в системе ниже ${pct(CL.exact_n_required, 0)} в точках ${bad.map((r) => `${s5Name(r.scheduler, r.cache)} N ${r.N} (${pct(r.exact_n_min)})`).join(", ")}.`
+    : `Цикл закрытый: во всех точках и повторах ровно N запросов в системе не меньше ${pct(Math.min(...CL.table.map((r) => r.exact_n_min)), 1)} времени замера (порог ${pct(CL.exact_n_required, 0)}).`)));
+  s.append(el("p", { class: "lede" }, "Метрики — в окне замера (от завершения последнего прогревочного до завершения последнего измеренного запроса); шаг на границе делится по перекрытию. RPS — завершённых запросов в секунду, ITPS — новые (не кэшированные) входные токены prefill-шагов, ITPS все — с попаданиями в кэш, OTPS — выходные токены (decode-батчи и первые токены). " +
+    "Модель: те же шаги по расписанию трассы, предсказанное время шагов плюс измеренные промежутки между ними; TTFT и TPOT — по измеренным запросам, как в «Итоговых графиках»."));
+  let row = chartRow(s);
+  chart(row, s5ByN("rps", "RPS от N", "RPS, запросов/с"), true);
+  chart(row, s5ByN("otps", "OTPS от N", "OTPS, выходных ток/с"), true);
+  row = chartRow(s);
+  chart(row, s5ByN("itps", "ITPS (новые токены) от N", "ITPS, новых входных ток/с"), true);
+  chart(row, s5ByN("ttft", "TTFT (медиана) от N", "TTFT, с"), true);
+  s.append(el("p", {}, V.map((v) => `${s5Name(v.scheduler, v.cache)}: RPS выходит на потолок (в пределах 5% от максимума ${num(v.rps_top, 3)} зап/с) при N = ${v.knee_rps}, OTPS — при N = ${v.knee_otps}; ` +
+    (v.n_kv != null ? `KV-кэш заполнен (вытеснения или ≥ ${pct(CL.kv_full, 0)}) с N = ${v.n_kv}` : `KV-кэш не заполнен до N = ${v.n_top} (максимум ${pct(v.kv_max_top)})`) + ".").join(" ")));
+
+  s.append(el("h3", {}, "ITPS–OTPS: потолок по прямой модели"));
+  s.append(el("p", { class: "lede" }, "Слева — точки N на фоне прямой \\(\\tilde a \\cdot \\mathrm{ITPS} + \\tilde b \\cdot \\mathrm{OTPS} = 1\\) по коэффициентам модели для смеси S5 варианта: \\(\\tilde a\\) — для запроса средней длины со средним \\(R\\) варианта, \\(\\tilde b\\) — для decode-шага с батчем и \\(\\bar\\ell\\) из трассы при наибольшем N. " +
+    "Крест — предсказанный потолок: пересечение прямой с лучом смеси (новых и выходных токенов на запрос), \\(\\mathrm{RPS}^* = 1 / (\\tilde a \\bar N + \\tilde b \\bar O)\\). Для upstream_dynamic пунктиром — та же прямая при батче, ограниченном KV-кэшем: \\(B_{\\mathrm{KV}} = \\text{KV-токены} / \\overline{N + O/2}\\). " +
+    "Справа — те же точки в долях бюджета по ценам окна из модели: \\(x = \\tilde a_w \\mathrm{ITPS}\\), \\(y = \\tilde b_w \\mathrm{OTPS}\\); на диагонали \\(x + y = 1\\) GPU всё время считает шаги и модель точна."));
+  row = chartRow(s);
+  chart(row, () => {
+    const traces = [];
+    let xmax = 0, ymax = 0;
+    for (const [sched, cache] of s5Variants()) {
+      const sub = s5Rows(sched, cache), color = cacheColor(cache), symbol = schedSymbol(sched);
+      const v = V.find((x) => x.scheduler === sched && x.cache === cache);
+      for (const [line, dash, label] of [[v.line_top, s5Line(sched), "B из трассы"], [v.line_kv, "dash", "B по KV"]]) {
+        if (!line) continue;
+        traces.push({ type: "scatter", mode: "lines", name: `${s5Name(sched, cache)} · прямая, ${label} = ${num(line.B, 3)}`, showlegend: false, x: [0, 1 / line.a_tilde], y: [1 / line.b_tilde, 0],
+          line: { color, width: 1, dash }, hovertemplate: `${s5Name(sched, cache)}, ${label} ${num(line.B, 3)}<br>1/ã %{customdata[0]:,.0f}, 1/b̃ %{customdata[1]:,.1f} ток/с<extra></extra>`, customdata: [[1 / line.a_tilde, 1 / line.b_tilde], [1 / line.a_tilde, 1 / line.b_tilde]] });
+      }
+      const star = v.line_top.rps;
+      traces.push({ type: "scatter", mode: "markers", name: `${s5Name(sched, cache)} · потолок по модели ${num(star, 3)} зап/с`, showlegend: false, x: [star * v.new_per_request], y: [star * v.out_per_request],
+        marker: { color, symbol: "x-thin-open", size: 16, line: { width: 2.5, color } }, hovertemplate: `потолок по модели ${num(star, 3)} зап/с; замер при N ${v.n_top}: ${num(v.rps_top, 3)}<extra></extra>` });
+      traces.push({ type: "scatter", mode: "lines+markers+text", name: `${s5Name(sched, cache)} · замер`, x: sub.map((r) => r.itps), y: sub.map((r) => r.otps),
+        text: sub.map((r) => `${r.N}`), textposition: "top left", textfont: { size: 10, color: css("--muted") }, customdata: sub.map(s5Hover), hovertemplate: "%{customdata}<extra></extra>",
+        line: { color, width: 1, dash: s5Line(sched) }, marker: { color, symbol, size: 9, line: { width: 1, color: css("--bg") } } });
+      xmax = Math.max(xmax, ...sub.map((r) => r.itps), star * v.new_per_request);
+      ymax = Math.max(ymax, ...sub.map((r) => r.otps), star * v.out_per_request);
+    }
+    traces.push({ type: "scatter", mode: "lines", name: "прямая модели (пунктир — B по KV)", x: [null], y: [null], line: { color: css("--muted"), width: 1 } });
+    traces.push({ type: "scatter", mode: "markers", name: "потолок по модели", x: [null], y: [null], marker: { color: css("--muted"), symbol: "x-thin-open", size: 14, line: { width: 2.5, color: css("--muted") } } });
+    return [traces, baseLayout("ITPS–OTPS по N и прямая модели", "ITPS, новых входных ток/с", "OTPS, выходных ток/с",
+      { xaxis: { ...baseLayout().xaxis, range: [0, xmax * 1.25], title: { text: "ITPS, новых входных ток/с" } }, yaxis: { ...baseLayout().yaxis, range: [0, ymax * 1.25], title: { text: "OTPS, выходных ток/с" } } })];
+  }, true);
+  chart(row, () => {
+    const traces = [];
+    for (const [sched, cache] of s5Variants()) {
+      const sub = s5Rows(sched, cache), color = cacheColor(cache), symbol = schedSymbol(sched);
+      traces.push({ type: "scatter", mode: "lines+markers+text", name: s5Name(sched, cache), x: sub.map((r) => r.a_tilde * r.itps), y: sub.map((r) => r.b_tilde * r.otps),
+        text: sub.map((r) => `${r.N}`), textposition: "top right", textfont: { size: 10, color: css("--muted") }, customdata: sub.map((r) => `${s5Hover(r)}<br>x ${num(r.a_tilde * r.itps, 3)}, y ${num(r.b_tilde * r.otps, 3)}, x + y ${num(r.a_tilde * r.itps + r.b_tilde * r.otps, 3)}`),
+        hovertemplate: "%{customdata}<extra></extra>", line: { color, width: 1, dash: s5Line(sched) }, marker: { color, symbol, size: 9, line: { width: 1, color: css("--bg") } } });
+    }
+    traces.push({ type: "scatter", mode: "lines", name: "x + y = 1", x: [0, 1], y: [1, 0], line: { color: css("--fg"), width: 1.5, dash: "dash" }, hoverinfo: "skip" });
+    return [traces, baseLayout("Доли бюджета GPU по N", "x = ã_w · ITPS (prefill)", "y = b̃_w · OTPS (decode)",
+      { xaxis: { ...baseLayout().xaxis, range: [0, 1.1], title: { text: "x = ã_w · ITPS (prefill)" } }, yaxis: { ...baseLayout().yaxis, range: [0, 1.1], scaleanchor: "x", title: { text: "y = b̃_w · OTPS (decode)" } } })];
+  }, true);
+  table(s, V, [
+    { label: "вариант", value: (v) => s5Name(v.scheduler, v.cache), text: true },
+    { label: "B из трассы (N max)", value: (v) => num(v.line_top.B, 3) }, { label: "потолок по прямой, зап/с", value: (v) => num(v.line_top.rps, 3) },
+    { label: "замер при N max, зап/с", key: "rps_top", fmt: (v) => num(v, 3) }, { label: "ошибка потолка", key: "e_ceiling", fmt: signShort },
+    { label: "B по KV", key: "B_kv", fmt: (v) => num(v, 3) }, { label: "потолок при B по KV, зап/с", value: (v) => (v.line_kv ? num(v.line_kv.rps, 3) : "—") },
+    { label: "TTPS–TTFT: наклон в лог-лог (N ≥ 2)", key: "ttps_ttft_slope", fmt: (v) => num(v, 3) },
+  ]);
+
+  s.append(el("h3", {}, "Батч, KV-кэш и запросы в системе"));
+  row = chartRow(s);
+  chart(row, s5ByN("batch", "Средний decode-батч от N", "B, запросов в decode-шаге", false), true);
+  chart(row, s5ByN("kv_max", "Максимальная заполненность KV от N", "доля блоков KV", false), true);
+  row = chartRow(s);
+  for (const ex of CL.examples) chart(row, () => {
+    const color = cacheColor(ex.cache), [w0, w1] = ex.window;
+    return [[{ type: "scatter", mode: "lines", line: { shape: "hv", color, width: 1.5 }, x: ex.t, y: ex.count, name: "в системе", hovertemplate: "t %{x:.2f} с: %{y} запросов<extra></extra>" }],
+      baseLayout(`${s5Name(ex.scheduler, ex.cache)} · N = ${ex.N}`, "время от первой подачи, с", "запросов в системе",
+        { showlegend: false, shapes: [{ type: "rect", xref: "x", yref: "paper", x0: w0, x1: w1, y0: 0, y1: 1, fillcolor: css("--muted"), opacity: 0.12, line: { width: 0 } }],
+          annotations: [{ xref: "x", yref: "paper", x: (w0 + w1) / 2, y: 1, yanchor: "bottom", showarrow: false, text: "окно замера", font: { size: 10, color: css("--muted") } }] })];
+  });
+  table(s, CL.table, [
+    { label: "вариант", value: (r) => s5Name(r.scheduler, r.cache), text: true }, { label: "N", key: "N" }, { label: "повт.", key: "n" },
+    { label: "RPS", value: (r) => `${num(r.rps, 3)} ± ${num(r.rps_sd, 2)}` }, { label: "ITPS новые", key: "itps", fmt: int }, { label: "ITPS все", key: "itps_all", fmt: int },
+    { label: "OTPS", key: "otps", fmt: int }, { label: "TTFT p50, с", key: "ttft", fmt: (v) => num(v, 3) }, { label: "TTFT p90, с", key: "ttft_p90", fmt: (v) => num(v, 3) },
+    { label: "TTPS, ток/с", key: "ttps", fmt: (v) => num(v, 3) }, { label: "батч", key: "batch", fmt: (v) => num(v, 3) }, { label: "доля prefill", key: "prefill_share", fmt: (v) => pct(v) },
+    { label: "KV max", key: "kv_max", fmt: (v) => pct(v) }, { label: "вытеснений", key: "preempted", fmt: (v) => num(v, 3) },
+    { label: "e RPS", key: "e_rps", fmt: signShort }, { label: "e TTFT", key: "e_ttft", fmt: signShort }, { label: "e TPOT", key: "e_tpot", fmt: signShort },
+    { label: "ровно N, мин.", key: "exact_n_min", fmt: (v) => pct(v) },
+  ], true);
+}
+
+function renderKnee(s) {
+  const Lc = D.local, A = Lc.arrivals;
+  s.append(el("h3", {}, "Излом: где сервер перестаёт успевать"));
+  s.append(el("p", { class: "lede" }, `Точка за изломом, нестационарно — если обслужено меньше ${pct(A.stationary_share, 0)} предложенного. Предложено — фактическая интенсивность приходов прогона (у выборки из ${A.requests_per_run} пуассоновских приходов она отличается от номинальной ρ·${num(A.capacity_rps, 3)}); ` +
+    "обслужено — запросов в секунду от первого прихода до последнего ответа. Среднее по 3 зёрнам. За изломом очередь растёт весь прогон, и медиана TTFT зависит от длины прогона, а не только от ρ."));
+  table(s, A.table, [
+    { label: "ρ", key: "rho" }, { label: "планировщик", key: "scheduler", text: true }, { label: "кэш", key: "cache" },
+    { label: "номинально, зап/с", key: "nominal_rps", fmt: (v) => num(v, 3) }, { label: "предложено, зап/с", key: "offered_rps", fmt: (v) => num(v, 3) },
+    { label: "обслужено, зап/с", key: "achieved_rps", fmt: (v) => num(v, 3) }, { label: "обслужено / предложено", key: "served_share", fmt: (v) => pct(v) },
+    { label: "режим", value: (r) => (r.stationary ? "стационарно" : "за изломом, нестационарно"), text: true },
+  ], true);
+  const byRank = Lc.ttft_by_rank || [];
+  if (byRank.length) {
+    s.append(el("p", { class: "lede" }, "TTFT по номеру запроса в прогоне (по приходу), медиана по зёрнам, — только точки за изломом. Растущая линия — очередь не рассасывается. Пунктир — модель (ожидание из трассы)."));
+    const row = chartRow(s);
+    for (const key of [...new Set(byRank.map((r) => `${r.scheduler}|${r.cache}`))]) {
+      const [sched, cache] = key.split("|");
+      chart(row, () => {
+        const sub = byRank.filter((r) => r.scheduler === sched && r.cache === cache);
+        const rhos = uniq(sub.map((r) => r.rho)), traces = [];
+        rhos.forEach((rho, i) => {
+          const pts = sub.filter((r) => r.rho === rho).sort((a, b) => a.arrival_rank - b.arrival_rank), color = seqColor(i, rhos.length);
+          traces.push({ type: "scatter", mode: "lines", name: `ρ ${rho}`, legendgroup: String(rho), x: pts.map((r) => r.arrival_rank), y: pts.map((r) => r.ttft), line: { color, width: 1.5 },
+            hovertemplate: `ρ ${rho}<br>запрос %{x}<br>TTFT %{y:.3f} с<extra></extra>` });
+          traces.push({ type: "scatter", mode: "lines", name: `ρ ${rho} · модель`, legendgroup: String(rho), showlegend: false, x: pts.map((r) => r.arrival_rank), y: pts.map((r) => r.ttft_hat), line: { color, width: 1, dash: "dash" }, hoverinfo: "skip" });
+        });
+        return [traces, baseLayout(`TTFT по номеру запроса: ${sched} · кэш ${cache}`, "номер запроса в прогоне", "TTFT, с (медиана по зёрнам)")];
+      }, true);
+    }
+  }
+
+  s.append(el("h3", {}, "Излом по модели: предельная пропускная способность"));
+  const top = Math.max(...A.table.map((r) => r.rho));
+  s.append(el("p", { class: "lede" }, `По коэффициентам модели для набора запросов S4 (те же \\(L\\), \\(O\\), общие префиксы). upstream_dynamic: батч decode ограничен KV-кэшем, \\(B = \\text{KV-токены} / \\overline{L - C + O/2}\\); запрос стоит своего prefill (накладные \\(c\\) делятся на полный шаг 16 384 токенов) и \\(O - 1\\) decode-токенов по \\(d_0/B + d_2 + d_1 \\ell\\). ` +
+    `fixed_batch: волны по 8 в порядке прихода, волна идёт до конца самого длинного запроса. Сравнение — с обслуженной интенсивностью при ρ = ${top}; если там ещё стационарно, замер — нижняя граница. ` +
+    "Для upstream_dynamic та же формула ещё раз с батчем из трассы: так видно, какая часть ошибки — от предположения о \\(B\\), а какая — от времени шагов."));
+  table(s, Lc.capacity, [
+    { label: "планировщик", key: "scheduler", text: true }, { label: "кэш", key: "cache" },
+    { label: "B: модель", key: "batch", fmt: (v) => num(v, 3) }, { label: "B: замер (среднее при ρ max)", key: "batch_measured", fmt: (v) => num(v, 3) },
+    { label: "предсказано, зап/с", key: "capacity_hat", fmt: (v) => num(v, 3) }, { label: `замер при ρ = ${top}, зап/с`, key: "served_at_top", fmt: (v) => num(v, 3) },
+    { label: "ошибка", key: "e", fmt: signShort },
+    { label: "модель при B из замера, зап/с", key: "capacity_hat_measured_b", fmt: (v) => num(v, 3) }, { label: "её ошибка", key: "e_measured_b", fmt: signShort },
+    { label: "при ρ max", value: (r) => (r.stationary_at_top ? "ещё стационарно" : "за изломом"), text: true },
+  ]);
+
+  const T = Lc.tpot_split || [];
+  if (T.length) {
+    s.append(el("h3", {}, "TPOT upstream_dynamic без кэша: из чего складывается"));
+    s.append(el("p", { class: "lede" }, "Между первым и последним токеном запроса идут decode-шаги (в них участвует и он сам) и prefill-шаги чужих запросов, которые планировщик ставит вперёд decode. TPOT = (decode + чужой prefill + промежутки между шагами) / (O − 1). Средние по запросам, поэтому части складываются в средний TPOT; замер и модель (предсказанные шаги того же расписания)."));
+    const row = chartRow(s);
+    chart(row, () => {
+      const xs = T.map((r) => `ρ ${r.rho}`), ms = (v) => v * 1e3;
+      const bar = (name, y, base, group, color, pattern) => ({ type: "bar", name, x: xs, y: y.map(ms), base: base.map(ms), offsetgroup: group, marker: { color, pattern: pattern ? { shape: "/", fillmode: "overlay", fgcolor: css("--bg"), size: 6 } : undefined, line: { width: 1, color: css("--bg") } },
+        hovertemplate: `${name}<br>%{x}: %{y:.2f} мс<extra></extra>` });
+      const dc = T.map((r) => r.dc), pf = T.map((r) => r.pf), oth = T.map((r) => Math.max(r.other, 0));
+      const dch = T.map((r) => r.dc_hat), pfh = T.map((r) => r.pf_hat);
+      return [[
+        bar("замер: decode-шаги", dc, T.map(() => 0), "m", css("--m1")),
+        bar("замер: чужой prefill", pf, dc, "m", css("--m3")),
+        bar("замер: между шагами", oth, dc.map((v, i) => v + pf[i]), "m", css("--muted")),
+        bar("модель: decode-шаги", dch, T.map(() => 0), "p", css("--m1"), true),
+        bar("модель: чужой prefill", pfh, dch, "p", css("--m3"), true),
+      ], baseLayout("TPOT по ρ: замер (слева) и модель (штриховка)", "нагрузка", "TPOT, мс (среднее)", { barmode: "group", bargap: 0.25 })];
+    }, true);
+    table(s, T, [
+      { label: "ρ", key: "rho" }, { label: "запросов", key: "n", fmt: int }, { label: "TPOT, мс", key: "tpot", fmt: (v) => num(v * 1e3, 4) },
+      { label: "decode: замер, мс", key: "dc", fmt: (v) => num(v * 1e3, 4) }, { label: "decode: модель, мс", key: "dc_hat", fmt: (v) => num(v * 1e3, 4) },
+      { label: "чужой prefill: замер, мс", key: "pf", fmt: (v) => num(v * 1e3, 4) }, { label: "чужой prefill: модель, мс", key: "pf_hat", fmt: (v) => num(v * 1e3, 4) },
+      { label: "между шагами, мс", key: "other", fmt: (v) => num(v * 1e3, 3) },
+    ]);
+  }
+}
+
+// The Vidur branch: laws of the time model on operation profiles (vidur.json).
+function renderVidur() {
+  charts = [];
+  sectionNo = 0;
+  const V = D, G = V.meta.specs;
+  const us = (v) => (v == null ? "—" : num(v * 1e6, 3));
+  const gpuName = (g) => (G[g]?.name ?? g);
+  const pairKey = (r) => `${r.gpu} · ${r.model}`;
+  const forms = ["G1", "G2", "G3", "G4"];
+  const formOf = (gpu, model, form) => V.attention_forms.find((r) => r.gpu === gpu && r.model === model && r.form === form);
+  const pairs = V.coverage.filter((c) => c.mlp);
+  const backendOf = (r) => (V.coverage.find((c) => c.gpu === r.gpu && c.model === r.model)?.backend || []).join(", ");
+
+  let s = section("Оговорки и источники",
+    `Профили операций Vidur (${V.meta.source}), коммит ${V.meta.commit.slice(0, 7)}. Наши коэффициенты — только для сравнения отношений, из запуска ${V.meta.ours_run}.`);
+  s.append(el("ul", { class: "notes" }, ...V.caveats.map((t) => el("li", {}, t))));
+  table(s, Object.entries(G).map(([id, g]) => ({ id, ...g })), [
+    { label: "GPU", key: "name", text: true }, { label: "пик BF16 dense, TFLOPS", key: "bf16_tflops" }, { label: "память, ГБ/с", key: "mem_gbs" }, { label: "источник", key: "source", text: true },
+  ]);
+
+  s = section("Покрытие данных", "Что есть в профилях для каждой пары GPU × модель. Нули — строки с медианой 0 (ниже разрешения 1 мкс), отброшены. «Нет» — операции или режима в файле нет; ничего не досчитывается.");
+  table(s, V.coverage, [
+    { label: "GPU", key: "gpu" }, { label: "модель", key: "model", text: true }, { label: "TP в файле", value: (r) => r.tp.join(", ") }, { label: "TP взят", key: "tp_used" },
+    { label: "бэкенд", value: (r) => r.backend.join(", "), text: true },
+    { label: "операции attention", value: (r) => r.attention_ops.join(", "), text: true },
+    { label: "kv_cache_save", value: (r) => (r.kv_cache_save ? "есть" : "нет") },
+    { label: "prefill строк", key: "prefill_rows", fmt: int }, { label: "batch", value: (r) => r.prefill_batch?.join("–") }, { label: "C′", value: (r) => r.chunk?.join("–") }, { label: "C", value: (r) => r.kv_prefill?.join("–") },
+    { label: "нулей prefill", key: "prefill_zero" },
+    { label: "decode строк", key: "decode_rows", fmt: int }, { label: "B", value: (r) => r.decode_batch?.join("–") }, { label: "KV", value: (r) => r.kv_decode?.join("–") }, { label: "нулей decode", key: "decode_zero" },
+    { label: "mlp: нет операций", value: (r) => (r.mlp_missing == null ? "mlp.csv нет" : r.mlp_missing.length ? r.mlp_missing.join(", ") : "все есть"), text: true },
+    { label: "num_tokens", value: (r) => r.num_tokens?.join("–") },
+  ], true);
+
+  s = section("Проверка 1. Attention prefill: геометрия кэша",
+    "Таргет — attn_prefill. Формы (у каждой свободный член t₀): G1 = β(C·C′ + C′²/2) — наша, \\(L^2(1-R^2)/2\\); G2 = β·C′(C + C′) — без ½, \\(L^2(1-R)\\); G3 = β·C′² — кэш не влияет; G4 = β₁C′² + β₂C·C′ — свободные коэффициенты. Подбор — относительный МНК. " +
+    "Две оценки: по всем точкам и «без кэша → с кэшем» (подбор только на C = 0, предсказание C > 0). Если геометрия G1 верна, в G4 \\(\\beta_2/\\beta_1 = 2\\).");
+  table(s, pairs, [
+    { label: "GPU", key: "gpu" }, { label: "модель", key: "model", text: true }, { label: "бэкенд", value: backendOf, text: true },
+    ...forms.map((f) => ({ label: `${f}: все / C=0→C>0`, value: (c) => { const r = formOf(c.gpu, c.model, f); return r ? `${pct(r.all_mean_abs)} / ${f === "G4" ? "—" : pct(r.nocache_mean_abs)}` : "—"; } })),
+    { label: "G4: β₂/β₁", value: (c) => num(formOf(c.gpu, c.model, "G4")?.ratio, 3) }, { label: "β₂/β₁ ÷ 2", value: (c) => num(formOf(c.gpu, c.model, "G4")?.ratio_vs_geometry, 3) },
+  ], true);
+  s.append(el("p", { class: "lede" }, "В ячейке — средняя \\(|e|\\). У G4 перенос с C = 0 не считается: на C = 0 член C·C′ нулевой и β₂ не определяется. Медиана, максимум и средний знак каждой формы — в таблице ниже."));
+  table(s, V.attention_forms, [
+    { label: "GPU", key: "gpu" }, { label: "модель", key: "model", text: true }, { label: "форма", key: "form" }, { label: "", key: "text", text: true },
+    { label: "все: средняя", key: "all_mean_abs", fmt: (v) => pct(v) }, { label: "медиана", key: "all_median_abs", fmt: (v) => pct(v) }, { label: "максимум", key: "all_max_abs", fmt: (v) => pct(v) }, { label: "знак", key: "all_mean_signed", fmt: signShort },
+    { label: "C=0→C>0: средняя", key: "nocache_mean_abs", fmt: (v) => pct(v) }, { label: "медиана", key: "nocache_median_abs", fmt: (v) => pct(v) }, { label: "максимум", key: "nocache_max_abs", fmt: (v) => pct(v) },
+  ], true);
+  let row = chartRow(s);
+  const dashes = { G1: "solid", G2: "dash", G3: "dot", G4: "dashdot" };
+  for (const [gpu, ch] of Object.entries(V.charts)) chart(row, () => {
+    const traces = [];
+    ch.prefill.series.forEach((sr, i) => {
+      const color = seqColor(i, ch.prefill.series.length);
+      traces.push({ type: "scatter", mode: "markers", name: `C′ = ${sr.chunk}`, legendgroup: String(sr.chunk), x: sr.C, y: sr.T.map((v) => v * 1e3), marker: { color, size: 6 },
+        hovertemplate: `C′ ${sr.chunk}, C %{x}<br>T %{y:.3f} мс<extra></extra>` });
+      for (const f of forms) traces.push({ type: "scatter", mode: "lines", name: f, legendgroup: f, showlegend: i === 0, x: sr.C, y: sr.forms[f].map((v) => v * 1e3),
+        line: { color: i === 0 ? css("--fg") : color, width: 1.5, dash: dashes[f] }, hoverinfo: "skip" });
+    });
+    return [traces, baseLayout(`${gpuName(gpu)}: Llama-2-7b, attn_prefill от C`, "C — токены в KV", "T, мс")];
+  }, true);
+  if ((V.kv_cache_save || []).length) {
+    s.append(el("p", {}, "attn_kv_cache_save (запись нового KV) — есть только в профилях с FlashInfer: подбор t₀ + k·C′."));
+    table(s, V.kv_cache_save, [
+      { label: "GPU", key: "gpu" }, { label: "модель", key: "model", text: true }, { label: "t₀, мкс", key: "t0", fmt: us }, { label: "k, мкс/токен", key: "k", fmt: us },
+      { label: "средняя |e|", key: "mean_abs", fmt: (v) => pct(v) }, { label: "медиана", key: "median_abs", fmt: (v) => pct(v) }, { label: "знак", key: "mean_signed", fmt: signShort },
+    ]);
+  } else s.append(el("p", { class: "lede" }, "attn_kv_cache_save в этих профилях нет."));
+
+  s = section("Проверка 2. Линейная часть (mlp.csv)",
+    "Таргет — сумма медиан всех имеющихся операций mlp.csv (emb, layernorm, QKV и O проекции, rope, MLP, add) от числа токенов N; подбор T = c + a·N. " +
+    "FLOPs на токен слоя: 2·(QKV + O + MLP) — emb (поиск по таблице) во времени есть, в FLOPs нет. Доля пика = (FLOPs / пик BF16) / a. Порог: плоский участок — N, до которого T не выше первой точки на 10%; излом c/a — где линейная часть сравнивается со свободным членом.");
+  table(s, V.mlp, [
+    { label: "GPU", key: "gpu" }, { label: "модель", key: "model", text: true }, { label: "операций", value: (r) => r.ops.length },
+    { label: "c, мкс", key: "c", fmt: us }, { label: "a, мкс/токен", key: "a", fmt: us }, { label: "средняя |e|", key: "mean_abs", fmt: (v) => pct(v) }, { label: "максимум", key: "max_abs", fmt: (v) => pct(v) },
+    { label: `|e| при N ≤ 64`, key: "small_mean_abs", fmt: (v) => pct(v) }, { label: "знак при N ≤ 64", key: "small_mean_signed", fmt: signShort },
+    { label: "плоско до N", key: "flat_to", fmt: int }, { label: "излом c/a", key: "knee_tokens", fmt: int },
+    { label: "GFLOP/токен", key: "flops_per_token", fmt: (v) => num(v / 1e9, 3) }, { label: "доля пика", key: "peak_share", fmt: (v) => pct(v) },
+  ], true);
+  row = chartRow(s);
+  for (const [gpu, ch] of Object.entries(V.charts)) chart(row, () => [[
+    { type: "scatter", mode: "markers", name: "замер", x: ch.mlp.N, y: ch.mlp.y.map((v) => v * 1e3), marker: { color: partColor("train"), size: 5 } },
+    { type: "scatter", mode: "lines", name: "c + a·N", x: ch.mlp.N, y: ch.mlp.pred.map((v) => v * 1e3), line: { color: css("--fg"), width: 1.5 } },
+  ], baseLayout(`${gpuName(gpu)}: Llama-2-7b, линейная часть`, "N, токены (лог)", "T, мс (лог)", { xaxis: logAxis("N, токены (лог)"), yaxis: { ...baseLayout().yaxis, type: "log", title: { text: "T, мс (лог)" } } })], true);
+  row = chartRow(s);
+  for (const [gpu, ch] of Object.entries(V.charts)) chart(row, () => [[
+    { type: "scatter", mode: "markers", name: "остаток", x: ch.mlp.N, y: ch.mlp.y.map((v, i) => ch.mlp.pred[i] / v - 1), marker: { color: partColor("test"), size: 5 } },
+  ], { ...errLayout(`${gpuName(gpu)}: остатки c + a·N`, "N, токены", "e = T̂ / T − 1"), xaxis: logAxis("N, токены (лог)") }], true);
+
+  s = section("Проверка 3. Отношение b / a",
+    "b — из G1 в нашей записи (коэффициент при \\(L^2(1-R^2)\\), то есть β/2), a — из проверки 2, для той же модели и GPU. По FLOPs: attention на пару (запрос, ключ) — \\(4 n_q d_{\\text{head}}\\), на единицу \\(L^2(1-R^2)\\) — половина; линейная часть на токен — FLOPs слоя. " +
+    "Отношение «замер / FLOPs» > 1 — attention тратит на FLOP больше времени, чем линейная часть.");
+  table(s, V.ratio, [
+    { label: "GPU", key: "gpu" }, { label: "модель", key: "model", text: true }, { label: "бэкенд", value: backendOf, text: true },
+    { label: "a, с/токен", key: "a", fmt: (v) => num(v, 3) }, { label: "b, с", key: "b", fmt: (v) => num(v, 3) }, { label: "b/a", key: "ratio", fmt: (v) => num(v, 3) },
+    { label: "b/a по FLOPs", key: "ratio_flops", fmt: (v) => num(v, 3) }, { label: "замер / FLOPs", key: "ratio_vs_flops", fmt: (v) => num(v, 3) },
+  ], true);
+  s.append(el("p", {}, "Наши модели (вся модель, на один GPU при TP) против той же оценки по FLOPs и памяти:"));
+  table(s, V.ours, [
+    { label: "ветка", key: "label", text: true }, { label: "GPU", value: (r) => gpuName(r.gpu), text: true }, { label: "TP", key: "tp" },
+    { label: "a, с/токен", key: "a", fmt: (v) => num(v, 3) }, { label: "b, с", key: "b", fmt: (v) => num(v, 3) }, { label: "b/a", key: "ratio", fmt: (v) => num(v, 3) },
+    { label: "b/a по FLOPs", key: "ratio_flops", fmt: (v) => num(v, 3) }, { label: "замер / FLOPs", key: "ratio_vs_flops", fmt: (v) => num(v, 3) },
+    { label: "a: доля пика", key: "peak_share", fmt: (v) => pct(v) }, { label: "d₁: оценка по памяти, с", key: "d1_memory", fmt: (v) => num(v, 3) }, { label: "d₁ замер, с", key: "d1", fmt: (v) => num(v, 3) },
+  ]);
+
+  s = section("Проверка 4. Attention decode: наклон по KV",
+    "Таргет — attn_decode от batch_size (B) и kv_cache_size (KV на запрос); подбор T = t₀ + d₁·(B·KV) + d₂·B. Оценка по памяти: \\(d_1 = 2 \\cdot n_{kv} \\cdot d_{\\text{head}} \\cdot 2\\ \\text{Б} / \\text{TP} / \\text{полоса}\\) — один слой, без множителя «слои». " +
+    "Доля полосы = оценка / d₁: около 1 — упор в память, > 1 — быстрее паспортной полосы (кэш L2 при малых KV). Порог: плоский участок — до какой Σℓ = B·KV медиана T не выше первой полосы на 10%; t₀/d₁ — где наклон сравнивается со свободным членом.");
+  table(s, V.decode, [
+    { label: "GPU", key: "gpu" }, { label: "модель", key: "model", text: true }, { label: "t₀, мкс", key: "t0", fmt: us }, { label: "d₁, с/токен", key: "d1", fmt: (v) => num(v, 3) }, { label: "d₂, мкс", key: "d2", fmt: us },
+    { label: "средняя |e|", key: "mean_abs", fmt: (v) => pct(v) }, { label: "d₁ по памяти", key: "d1_memory", fmt: (v) => num(v, 3) }, { label: "доля полосы", key: "bandwidth_share", fmt: (v) => pct(v, 0) },
+    { label: "плоско до Σℓ", key: "flat_to_sum_l", fmt: int }, { label: "t₀/d₁", key: "knee_sum_l", fmt: int },
+  ], true);
+  row = chartRow(s);
+  for (const [gpu, ch] of Object.entries(V.charts)) chart(row, () => {
+    const x = ch.decode.B.map((b, i) => b * ch.decode.kv[i]);
+    return [[{ type: "scattergl", mode: "markers", name: "замер", x, y: ch.decode.y.map((v) => v * 1e3),
+      marker: { size: 4, opacity: 0.7, color: ch.decode.B.map((b) => Math.log2(b)), colorscale: [[0, isDark() ? "hsl(212, 75%, 38%)" : "hsl(212, 70%, 80%)"], [1, isDark() ? "hsl(212, 75%, 85%)" : "hsl(212, 70%, 25%)"]],
+        colorbar: { title: { text: "B", font: { size: 11, color: css("--muted") } }, tickvals: [0, 2, 4, 6, 7], ticktext: ["1", "4", "16", "64", "128"], outlinewidth: 0, tickfont: { color: css("--muted") } } } },
+      { type: "scattergl", mode: "markers", name: "модель", x, y: ch.decode.pred.map((v) => v * 1e3), marker: { size: 3, color: css("--fg"), opacity: 0.5 } }],
+      baseLayout(`${gpuName(gpu)}: Llama-2-7b, attn_decode`, "Σℓ = B·KV (лог)", "T, мс (лог)", { xaxis: logAxis("Σℓ = B·KV (лог)"), yaxis: { ...baseLayout().yaxis, type: "log", title: { text: "T, мс (лог)" } } })];
+  }, true);
+
+  s = section("Проверка 5. Сравнение GPU и что ожидать на A4000",
+    "Одна строка на GPU × модель: a и b (с на токен и на единицу \\(L^2(1-R^2)\\) одного слоя), b/a против FLOPs, d₁ и доля полосы, пороги, доля пика линейной части.");
+  table(s, V.gpus, [
+    { label: "GPU", key: "gpu" }, { label: "модель", key: "model", text: true }, { label: "a", key: "a", fmt: (v) => num(v, 3) }, { label: "b", key: "b", fmt: (v) => num(v, 3) },
+    { label: "b/a", key: "ratio", fmt: (v) => num(v, 3) }, { label: "÷ FLOPs", key: "ratio_vs_flops", fmt: (v) => num(v, 3) }, { label: "d₁", key: "d1", fmt: (v) => num(v, 3) },
+    { label: "доля полосы", key: "bandwidth_share", fmt: (v) => pct(v, 0) }, { label: "MLP плоско до N", key: "mlp_flat_to", fmt: int }, { label: "decode плоско до Σℓ", key: "decode_flat_to", fmt: int },
+    { label: "доля пика a", key: "peak_share", fmt: (v) => pct(v) },
+  ], true);
+  const A = V.a4000;
+  s.append(el("h3", {}, "A40 (Ampere) → A4000"));
+  s.append(el("p", { class: "lede" }, `A40 — ближайший родственник A4000 (тот же Ampere GA10x). Пересчёт по паспортам: a и b — ×${num(A.compute_scale, 3)} (пик BF16 A40 / A4000), d₁ — ×${num(A.memory_scale, 3)} (полоса). ` +
+    "Затем с Llama-2-7b на Qwen3-8B (36 слоёв, TP = 2) — по FLOPs слоя, FLOPs пары и байтам KV на токен. Это только порядок: модели разные, обмен между GPU при TP = 2 и накладные шага в профиле не учтены."));
+  table(s, ["a", "b", "d1"].map((k) => ({ k, layer: A.per_layer_a4000[k], expected: A.expected_qwen3_8b_tp2[k], ours: A.ours[k], ratio: A.ours_vs_expected[k] })), [
+    { label: "коэффициент", value: (r) => ({ a: "a, с/токен", b: "b, с", d1: "d₁, с/токен Σℓ" })[r.k], text: true },
+    { label: "A4000, слой Llama-2-7b", key: "layer", fmt: (v) => num(v, 3) }, { label: "ожидание: Qwen3-8B, TP = 2", key: "expected", fmt: (v) => num(v, 3) },
+    { label: "наша подгонка (8B long context)", key: "ours", fmt: (v) => num(v, 3) }, { label: "наша / ожидание", key: "ratio", fmt: (v) => num(v, 3) },
+  ]);
+}
+
+// The summary of every check over every data set, shown above any model.
+function summaryTable() {
+  const cells = DOC.summary || [];
+  if (!cells.length) return null;
+  const columns = [...new Set(cells.map((c) => c.column))];
+  const flags = {};
+  for (const m of DOC.models) {
+    for (const c of cells.filter((x) => x.model === m.label)) {
+      const src = (m.sources || []).find((x) => c.column.startsWith(x.label + " · "));
+      const note = src?.caveat || m.caveat;
+      if (note) flags[c.column] = note;
+    }
+  }
+  const rows = [...new Set(cells.map((c) => c.check))];
+  const wrap = el("section", {}, el("h2", {}, "Что проверено и с какой ошибкой"),
+    el("p", { class: "lede" }, "По всем наборам данных, без новой подгонки основной модели. В ячейке: средняя \\(|e|\\) / медиана \\(|e|\\), ниже — средний знак \\(e\\) и число шагов, прогонов, окон или запросов. Смеси — окна по времени с долей prefill 30–70%, ошибка \\(x + y - 1\\). " +
+      "Наборы: сначала локальные (чистая машина), затем сервер 8B, затем сервер 0.6B. У локальной модели train — сетки S1–S2, test — смеси S3."));
+  const head = el("tr", {}, el("th", { class: "text" }, "проверка"), ...columns.map((c) => el("th", { class: "text" }, c + (flags[c] ? ` — ${flags[c]}` : ""))));
+  const body = rows.map((check) => el("tr", {}, el("td", { class: "text" }, check), ...columns.map((col) => {
+    const c = cells.find((x) => x.check === check && x.column === col);
+    const td = el("td", { class: flags[col] ? "muted" : "" });
+    if (!c || !c.n) td.textContent = "нет данных";
+    else td.append(el("strong", {}, `${pct(c.mean_abs)} / ${pct(c.median_abs)}`), el("br"), `${signShort(c.mean_signed)} · n ${int(c.n)}`);
+    return td;
+  })));
+  wrap.append(el("div", { class: "table-wrap" }, el("table", { class: "summary" }, el("thead", {}, head), el("tbody", {}, ...body))));
+  return wrap;
+}
+
 function renderModel() {
   charts = [];
   sectionNo = 0;
@@ -268,7 +1023,7 @@ function renderModel() {
   if (ds) tile("decode-шаг, test", pct(ds.mean_abs), `средняя \\(|e|\\), ${ds.n} шагов`);
   for (const s of transfers) {
     const row = metric("T_total per run", "transfer", s.id);
-    if (row) tile(`перенос: ${s.label}`, (row.mean_signed > 0 ? "+" : "") + pct(row.mean_signed), "\\(e\\) со знаком, без подгонки");
+    if (row) tile(`перенос: ${s.label}`, (row.mean_signed > 0 ? "+" : "") + pct(row.mean_signed), s.caveat ? `${s.caveat}` : "\\(e\\) со знаком, без подгонки");
   }
   app.append(tiles);
   app.append(el("p", { class: "lede" },
@@ -300,27 +1055,91 @@ function renderModel() {
 
   // 3. Final charts.
   const L = D.prices.lines.ref;
-  s = section("Итоговые графики",
-    `Прямые \\(\\tilde a \\cdot \\mathrm{ITPS} + \\tilde b \\cdot \\mathrm{OTPS} = 1\\) — по модели для запроса медианной длины \\(L = ${int(L.L)}\\), ` +
-    `decode-шага с медианным \\(B = ${num(L.B, 2)}\\) и медианной \\(\\bar\\ell = ${int(L.ell)}\\). Точки — реальные прогоны: \\(\\mathrm{ITPS} = I / T^{\\mathrm{wall}}\\), \\(\\mathrm{OTPS} = O / T^{\\mathrm{wall}}\\); цвет — кэш, форма — планировщик. ` +
-    "Прямые прогонов (по их взвешенным \\(\\tilde a,\\ \\tilde b\\)) включаются в легенде.");
+  const itpsNote = "ITPS везде — только новые (не кэшированные) входные токены: \\(I = \\sum L(1 - R)\\) по prefill-строкам, кэш префиксов и готовый KV своего куска не входят.";
+  s = section("Итоговые графики", D.local
+    ? `${itpsNote} Семейства прямых по R и по B для этих данных не строятся: train-сетки S1 и S2 синтетические (prefill без decode и decode без новых запросов), поэтому смеси проверяются окнами ниже.`
+    : `Прямые \\(\\tilde a \\cdot \\mathrm{ITPS} + \\tilde b \\cdot \\mathrm{OTPS} = 1\\) — по модели для запроса медианной длины \\(L = ${int(L.L)}\\), ` +
+      `decode-шага с медианным \\(B = ${num(L.B, 2)}\\) и медианной \\(\\bar\\ell = ${int(L.ell)}\\). Точки — реальные прогоны: \\(\\mathrm{ITPS} = I / T^{\\mathrm{wall}}\\), \\(\\mathrm{OTPS} = O / T^{\\mathrm{wall}}\\); цвет — кэш, форма — планировщик. ` +
+      `Прямые прогонов (по их взвешенным \\(\\tilde a,\\ \\tilde b\\)) включаются в легенде. ${itpsNote}`);
   let row = chartRow(s);
-  chart(row, () => budgetChart("by_R", "ITPS–OTPS: семейство по R", "itps"), true);
-  chart(row, () => budgetChart("by_B", "ITPS–OTPS: семейство по B (R = 0)", "otps"), true);
+  if (!D.local) {
+    chart(row, () => budgetChart("by_R", "ITPS–OTPS: семейство по R_кэш", "itps"), true);
+    chart(row, () => budgetChart("by_B", "ITPS–OTPS: семейство по B (R_кэш = 0)", "otps"), true);
+  }
+  if (L.B_max != null && !D.local) s.append(el("p", { class: "lede" }, `Ёмкость KV: \\(B_{\\max} = \\text{KV-блоки} \\times \\text{размер блока} / (\\text{медианная } L + \\text{медианная } O) = ${num(L.B_max, 3)}\\) при медианных \\(L = ${int(L.L)}\\), \\(O = ${int(L.O)}\\). Прямые с \\(B > B_{\\max}\\) — пунктир «недостижимо по памяти»: столько типичных запросов разом в KV-кэш не помещается.`));
+  const W = D.prices.windows;
+  if (W && W.points.length) {
+    s.append(el("h3", {}, `ITPS–OTPS по окнам времени (${W.seconds} с)`));
+    s.append(el("p", { class: "lede" }, `Каждый прогон нарезан на окна по ${W.seconds} с от первого шага; шаг на границе окон делится между ними по перекрытию (время, предсказание и токены); окна, где меньше ${W.min_steps} шагов, отброшены. ` +
+      "В окне \\(I_w\\) — новые (не кэшированные) входные токены его prefill-шагов, \\(O_w\\) — токены его decode-шагов, \\(T_w\\) — длина окна; " +
+      "цены — по модели: \\(\\tilde a_w = \\sum \\hat T_{\\mathrm{pf}} / I_w\\), \\(\\tilde b_w = \\sum \\hat T_{\\mathrm{dc}} / O_w\\). Точка \\((\\tilde a_w \\mathrm{ITPS}_w,\\ \\tilde b_w \\mathrm{OTPS}_w)\\) лежит на диагонали \\(x + y = 1\\), если модель точна и GPU не простаивает. Цвет — доля prefill во времени шагов окна (замер)."));
+    row = chartRow(s);
+    chart(row, () => {
+      const pts = W.points;
+      const hi = Math.max(1.05, ...pts.map((p) => p.x + p.y)) * 1.02;
+      return [[{
+        type: "scattergl", mode: "markers", name: "окна", x: pts.map((p) => p.x), y: pts.map((p) => p.y),
+        marker: { size: 6, opacity: 0.75, color: pts.map((p) => p.share), cmin: 0, cmax: 1,
+          colorscale: [[0, isDark() ? "hsl(212, 75%, 38%)" : "hsl(212, 70%, 80%)"], [1, isDark() ? "hsl(212, 75%, 85%)" : "hsl(212, 70%, 25%)"]],
+          colorbar: { title: { text: "доля prefill", font: { size: 11, color: css("--muted") } }, tickformat: ".0%", outlinewidth: 0, tickfont: { color: css("--muted") } } },
+        text: pts.map((p) => `${p.run_id} · окно ${p.w} (${sourceLabel(p.source)}, ${PART_LABEL[p.part] ?? p.part})<br>шагов ${p.steps}, T_w ${num(p.T_w, 3)} с<br>ITPS ${int(p.ITPS)}, OTPS ${num(p.OTPS, 3)}<br>ã_w ${num(p.a_w, 3)}, b̃_w ${num(p.b_w, 3)}<br>x ${num(p.x, 3)}, y ${num(p.y, 3)}, x + y ${num(p.x + p.y, 3)}<br>доля prefill ${pct(p.share)}`),
+        hovertemplate: "%{text}<extra></extra>",
+      }, { type: "scatter", mode: "lines", name: "x + y = 1", x: [0, 1], y: [1, 0], line: { color: css("--fg"), width: 1.5, dash: "dash" }, hoverinfo: "skip" }],
+      baseLayout("Окна: доли бюджета GPU", "x = ã_w · ITPS_w (prefill)", "y = b̃_w · OTPS_w (decode)",
+        { xaxis: { ...baseLayout().xaxis, range: [0, hi], title: { text: "x = ã_w · ITPS_w (prefill)" } }, yaxis: { ...baseLayout().yaxis, range: [0, hi], scaleanchor: "x", title: { text: "y = b̃_w · OTPS_w (decode)" } } })];
+    }, true);
+    const mid = W.summary.filter((r) => r.part !== "train");
+    if (mid.length) s.append(el("p", {}, mid.map((r) => `${sourceLabel(r.source)} (${PART_LABEL[r.part] ?? r.part}): ${int(r.windows)} окон, в середине (prefill 30–70%) ${int(r.share_30_70)}; средняя \\(|x + y - 1|\\) ${pct(r.mean_abs_gap)}` + (r.mean_abs_gap_mid != null ? `, в середине ${pct(r.mean_abs_gap_mid)}` : "") + ".").join(" ")));
+    table(s, W.summary, [
+      { label: "данные", value: (r) => sourceLabel(r.source), text: true }, { label: "часть", value: (r) => PART_LABEL[r.part] ?? r.part },
+      { label: "окон", key: "windows", fmt: int }, { label: "prefill 0–30%", key: "share_0_30", fmt: int },
+      { label: "30–70%", key: "share_30_70", fmt: int }, { label: "70–100%", key: "share_70_100", fmt: int },
+      { label: "средняя |x + y − 1|", key: "mean_abs_gap", fmt: (v) => pct(v) }, { label: "она же в 30–70%", key: "mean_abs_gap_mid", fmt: (v) => pct(v) },
+    ]);
+  }
   s.append(el("p", { class: "lede" }, "Бюджет по модели \\(\\tilde a \\cdot \\mathrm{ITPS} + \\tilde b \\cdot \\mathrm{OTPS} = \\hat T_{\\mathrm{total}} / T^{\\mathrm{wall}} = 1 + e\\); по замеру — \\(\\sum T_s / T^{\\mathrm{wall}}\\), доля времени, когда GPU считает шаги."));
   table(s, D.prices.runs.filter((r) => r.part !== "unused"), [
     { label: "прогон", key: "run_id", text: true, mono: true }, { label: "данные", value: (r) => sourceLabel(r.source), text: true },
     { label: "часть", value: (r) => PART_LABEL[r.part] ?? r.part }, { label: "кэш", key: "cache" }, { label: "планировщик", key: "scheduler", text: true },
-    { label: "ITPS", key: "ITPS", fmt: int }, { label: "OTPS", key: "OTPS", fmt: (v) => num(v, 3) },
+    { label: "I новые", key: "I_new", fmt: int }, { label: "ITPS (новые)", key: "ITPS", fmt: int }, { label: "OTPS", key: "OTPS", fmt: (v) => num(v, 3) },
     { label: "ã модель, с/ток", key: "a_model", fmt: (v) => num(v, 3) }, { label: "b̃ модель, с/ток", key: "b_model", fmt: (v) => num(v, 3) },
     { label: "бюджет: модель", key: "budget_model", fmt: (v) => num(v, 4) }, { label: "бюджет: замер", key: "budget_meas", fmt: (v) => num(v, 4) },
   ], true);
-  s.append(el("h3", {}, "TTPS–TTFT по запросам"));
+  s.append(el("h3", {}, "TTPS–TTFT"));
+  if (!D.arrivals) s.append(el("p", {}, el("strong", {}, "Во всех прогонах одна нагрузка (запросы приходят разом), поэтому это разброс внутри очереди, а не кривая от нагрузки. Для гиперболы нужны прогоны с разным числом одновременных пользователей.")));
   s.append(el("p", { class: "lede" }, "Замер: \\(\\mathrm{TTFT}\\) = первый токен − постановка в очередь, \\(\\mathrm{TPOT} = (\\text{конец} - \\text{первый токен}) / (O - 1)\\), \\(\\mathrm{TTPS} = 1/\\mathrm{TPOT}\\). " +
-    "Модель: TTFT — сумма предсказанных шагов до шага первого токена, TPOT — предсказанные шаги после первого токена до последнего, делённые на \\(O - 1\\) (без чужих prefill-шагов это \\(1 / T_{\\mathrm{dc}}\\) при \\(B\\) из трассы). " +
-    "Ожидание взято из трассы, а не предсказано: модель очереди ещё не построена. Запросы с \\(O = 1\\) дают только TTFT."));
+    "Модель: TTFT — сумма предсказанных шагов от прихода запроса до шага его первого токена, TPOT — предсказанные шаги после первого токена до последнего, делённые на \\(O - 1\\). " +
+    "Ожидание взято из трассы, а не предсказано: модель очереди ещё не построена. Одна точка — медианы TTFT и TTPS по группе запросов." +
+    (D.local?.closed_loop ? " Главная кривая — закрытый цикл S5: в системе ровно N запросов, линии по возрастанию N для каждой пары (планировщик, кэш), подпись — N; модель — та же линия пунктиром с полыми точками. Поток S4 (открытый, за изломом там очередь) — в разделе S4. Остальные группы (train, S3, S0 — все запросы приходят разом) — на отдельном графике." : "")));
+  const CL = D.local?.closed_loop;
+  const groups = (D.request_groups || []).filter((g) => g.ttps != null);
+  const rest = groups.filter((g) => g.rho == null && g.source !== CL?.source);
+  if (CL) {
+    row = chartRow(s);
+    chart(row, s5TtpsChart("ttft", "ttft_hat", "S5: TTPS от медианы TTFT по N", "TTFT, с (медиана, лог)"), true);
+    chart(row, s5TtpsChart("ttft_p90", "ttft_hat_p90", "S5: TTPS от p90 TTFT по N", "TTFT, с (p90, лог)"), true);
+  }
   row = chartRow(s);
-  chart(row, () => {
+  if (rest.length) chart(row, () => {
+    const traces = [];
+    for (const g of rest) {
+      const color = cacheColor(g.cache), symbol = schedSymbol(g.scheduler);
+      const name = `${sourceLabel(g.source)} · ${PART_LABEL[g.part] ?? g.part} · ${g.scheduler} · кэш ${g.cache}`;
+      const text = `${name}<br>${g.n} запросов в ${g.runs} прогонах<br>TTFT: замер ${num(g.ttft, 3)} с (p90 ${num(g.ttft_p90, 3)}), модель ${num(g.ttft_hat, 3)} с<br>TTPS: замер ${num(g.ttps, 3)}, модель ${num(g.ttps_hat, 3)} ток/с`;
+      traces.push({ type: "scatter", mode: "markers", name, x: [g.ttft], y: [g.ttps], text: [text], hovertemplate: "%{text}<extra></extra>", showlegend: false,
+        marker: { color, symbol, size: 11, line: { width: 1, color: css("--bg") } } });
+      traces.push({ type: "scatter", mode: "lines+markers", showlegend: false, x: [g.ttft, g.ttft_hat], y: [g.ttps, g.ttps_hat], hoverinfo: "skip",
+        line: { color, width: 1, dash: "dot" }, marker: { color, symbol: [symbol, symbol + "-open"], size: [0.1, 12], line: { width: 1.5, color } } });
+    }
+    for (const c of [...new Set(rest.map((g) => g.cache))]) traces.push({ type: "scatter", mode: "markers", name: `кэш ${c}`, x: [null], y: [null], marker: { color: cacheColor(c), size: 10 } });
+    for (const sc of [...new Set(rest.map((g) => g.scheduler))]) traces.push({ type: "scatter", mode: "markers", name: sc, x: [null], y: [null], marker: { color: css("--muted"), symbol: schedSymbol(sc), size: 10 } });
+    traces.push({ type: "scatter", mode: "markers", name: "модель", x: [null], y: [null], marker: { color: css("--muted"), symbol: "circle-open", size: 10, line: { width: 1.5 } } });
+    return [traces, baseLayout(D.local ? "Запросы приходят разом: train, S3, S0" : "TTPS–TTFT: медианы по группам", "TTFT, с (медиана, лог)", "TTPS = 1 / TPOT, ток/с (медиана)", { xaxis: { ...baseLayout().xaxis, type: "log", title: { text: "TTFT, с (медиана, лог)" } } })];
+  }, true);
+  const cloud = el("details", {}, el("summary", {}, "Облако по отдельным запросам (выборка)"));
+  s.append(cloud);
+  cloud.addEventListener("toggle", () => { if (cloud.open && window.Plotly) cloud.querySelectorAll(".chart").forEach((b) => Plotly.Plots.resize(b)); });
+  chart(cloud, () => {
     const reqs = D.requests.filter((r) => r.part !== "unused" && r.ttps != null);
     const traces = [];
     for (const sched of [...new Set(reqs.map((r) => r.scheduler))]) {
@@ -340,10 +1159,15 @@ function renderModel() {
     { label: "максимум |e|", key: "max_abs", fmt: (v) => pct(v) }, { label: "средний знак", key: "mean_signed", fmt: signed },
   ]);
 
+  renderChecks();
+  if (D.local) renderLocal();
+  renderQuality();
+
   // 4. Metrics.
   s = section("Ошибки и коэффициенты",
     "Средняя, медиана и максимум — по модулю \\(|e|\\); средний знак — среднее \\(e\\): плюс — перебор (переоценка), минус — недобор.");
-  table(s, D.metrics, [
+  const caveat = (id) => (D.sources || []).find((x) => x.id === id)?.caveat;
+  const metricColumns = [
     { label: "что", key: "what", text: true },
     { label: "данные", value: (r) => sourceLabel(r.source), text: true },
     { label: "часть", value: (r) => PART_LABEL[r.part] ?? r.part },
@@ -353,16 +1177,21 @@ function renderModel() {
     { label: "максимум", key: "max_abs", fmt: (v) => pct(v) },
     { label: "средний знак", key: "mean_signed", fmt: signed },
     { label: "коэффициенты", value: (r) => coefText(r.coef), text: true },
-  ]);
+  ];
+  table(s, D.metrics.filter((r) => !caveat(r.source)), metricColumns);
+  for (const src of (D.sources || []).filter((x) => x.caveat)) {
+    s.append(el("p", {}, el("strong", {}, `Перенос на ${src.label}: ${src.caveat}.`), " Ошибка показывает разницу машин, а не точность модели, поэтому вынесена из таблицы."));
+    table(s, D.metrics.filter((r) => r.source === src.id), metricColumns);
+  }
   if (D.prefill_model.cache_split_coef) s.append(el("p", { class: "lede" }, `Модель A, подобранная только на прогонах без кэша: ${coefText(D.prefill_model.cache_split_coef)}.`));
 
   // 5. Prediction against measurement.
   const pf = D.prefill_steps.filter((r) => r.source === train?.id);
   const dc = D.decode_sample.filter((r) => r.source === train?.id);
   const runsAll = D.runs.filter((r) => r.part !== "unused");
-  s = section("Предсказание против замера", "Prefill-шаги, decode-шаги (случайная выборка до 4000) и прогоны; пунктир — \\(y = x\\).");
+  s = section("Предсказание против замера", "Prefill-шаги и decode-шаги (случайные выборки до 2500 на набор) и прогоны; пунктир — \\(y = x\\).");
   row = chartRow(s);
-  const pfHover = (r) => `${r.run_id} ${r.step_id}<br>T ${r.T.toFixed(3)} s, T̂ ${r.pred.toFixed(3)} s<br>L̄ ${r.L_mean?.toFixed(0)}, R ${r.R_step?.toFixed(2)}<br>ошибка ${pct(r.rel_err)}`;
+  const pfHover = (r) => `${r.run_id} ${r.step_id}<br>T ${r.T.toFixed(3)} s, T̂ ${r.pred.toFixed(3)} s<br>L̄ ${r.L_mean?.toFixed(0)}, R_кэш ${r.R_cache_step?.toFixed(2)}, R_нарезка ${r.R_chunk_step?.toFixed(2)}<br>ошибка ${pct(r.rel_err)}`;
   const dcHover = (r) => `${r.run_id}<br>T ${(r.T * 1e3).toFixed(1)} ms, T̂ ${(r.pred * 1e3).toFixed(1)} ms<br>B ${r.B}, Σℓ ${r.sum_l}<br>ошибка ${pct(r.rel_err)}`;
   chart(row, () => { const t = scatterByPart(pf, "T", "pred", pfHover); t.push(identityLine(pf.map((r) => r.T), pf.map((r) => r.pred))); return [t, baseLayout("Prefill-шаг", "замер, s", "предсказание, s")]; });
   chart(row, () => { const t = scatterByPart(dc, "T", "pred", dcHover); t.push(identityLine(dc.map((r) => r.T), dc.map((r) => r.pred))); return [t, baseLayout("Decode-шаг", "замер, s", "предсказание, s")]; });
@@ -374,12 +1203,15 @@ function renderModel() {
 
   // 6. Error against L, R, Σℓ, B.
   s = section("Ошибка от L, R, Σℓ, B",
-    "Медиана и межквартильный размах \\(e\\) по квантильным корзинам, по всем шагам. Графики по \\(R\\) — только шаги с \\(R > 0\\); \\(R_{\\mathrm{step}} = \\sum C / \\sum L\\).");
+    "Медиана и межквартильный размах \\(e\\) по квантильным корзинам, по всем шагам. \\(R\\) разделён на две части: \\(R_{\\text{кэш}}\\) — попадания в кэш префиксов (чужой запрос), \\(R_{\\text{нарезка}}\\) — готовый KV своего же запроса при chunked prefill; у прогонов без кэша \\(R_{\\text{кэш}} = 0\\). " +
+    "Графики по каждой части — только шаги, где она больше нуля; у шага \\(R = \\sum C / \\sum L\\).");
   row = chartRow(s);
   const onTrain = (list) => (list || []).filter((b) => b.source === train?.id);
   chart(row, () => [binnedTraces(onTrain(D.prefill_binned.L_mean)), errLayout("Prefill: ошибка от L̄", "средняя L шага, токены", "ошибка (медиана)")]);
-  if (onTrain(D.prefill_binned.R_step).length) chart(row, () => [binnedTraces(onTrain(D.prefill_binned.R_step)), errLayout("Prefill: ошибка от R", "R шага", "ошибка (медиана)")]);
+  if (onTrain(D.prefill_binned.R_cache_step).length) chart(row, () => [binnedTraces(onTrain(D.prefill_binned.R_cache_step)), errLayout("Prefill: ошибка от R_кэш", "R_кэш шага (попадания в кэш префиксов)", "ошибка (медиана)")]);
+  if (onTrain(D.prefill_binned.R_chunk_step).length) chart(row, () => [binnedTraces(onTrain(D.prefill_binned.R_chunk_step)), errLayout("Prefill: ошибка от R_нарезка", "R_нарезка шага (свой KV при chunked prefill)", "ошибка (медиана)")]);
   const g = D.prefill_grid || {};
+  const gName = g.r_kind === "R_chunk_step" ? "R_нарезка" : "R_кэш";
   if ((g.median || []).length) chart(row, () => {
     const vals = g.median.flat().filter((v) => v != null);
     const lim = Math.max(0.05, ...vals.map(Math.abs));
@@ -388,16 +1220,12 @@ function renderModel() {
       colorscale: [[0, css("--div-neg")], [0.5, css("--div-mid")], [1, css("--div-pos")]], xgap: 2, ygap: 2,
       text: g.count.map((r) => r.map((n) => (n ? String(n) : ""))), texttemplate: "%{text}", textfont: { color: css("--fg"), size: 11 },
       colorbar: { tickformat: ".0%", outlinewidth: 0, tickfont: { color: css("--muted") } },
-      hovertemplate: "L̄ ≈ %{x}<br>R ≈ %{y}<br>медиана e %{z:.1%}<br>шагов %{text}<extra></extra>",
-    }], baseLayout("Prefill: медиана e на сетке L̄ × R", "средняя L шага (центр корзины)", "R шага (центр корзины)", { xaxis: { ...baseLayout().xaxis, type: "category", title: { text: "средняя L шага (центр корзины)" } }, yaxis: { ...baseLayout().yaxis, type: "category", title: { text: "R шага (центр корзины)" } } })];
+      hovertemplate: `L̄ ≈ %{x}<br>${gName} ≈ %{y}<br>медиана e %{z:.1%}<br>шагов %{text}<extra></extra>`,
+    }], baseLayout(`Prefill: медиана e на сетке L̄ × ${gName}`, "средняя L шага (центр корзины)", `${gName} шага (центр корзины)`, { xaxis: { ...baseLayout().xaxis, type: "category", title: { text: "средняя L шага (центр корзины)" } }, yaxis: { ...baseLayout().yaxis, type: "category", title: { text: `${gName} шага (центр корзины)` } } })];
   });
   row = chartRow(s);
   chart(row, () => [binnedTraces(onTrain(D.decode_binned.sum_l)), errLayout("Decode: ошибка от Σℓ", "Σℓ, токены", "ошибка (медиана)")]);
   chart(row, () => [binnedTraces(onTrain(D.decode_binned.B)), errLayout("Decode: ошибка от B", "B, запросов в шаге", "ошибка (медиана)")]);
-  row = chartRow(s);
-  const runHover = (r) => `${r.run_id} · ${sourceLabel(r.source)}<br>L̄ ${r.L_mean?.toFixed(0)}, R ${r.R_run?.toFixed(2)}<br>${r.scheduler}, кэш ${r.cache}<br>ошибка ${pct(r.rel_err)}`;
-  chart(row, () => [scatterByPart(runsAll, "L_mean", "rel_err", runHover), errLayout("T_total: ошибка от L̄ прогона", "средняя длина промпта прогона")]);
-  chart(row, () => [scatterByPart(runsAll, "R_run", "rel_err", runHover), errLayout("T_total: ошибка от R прогона", "R = ΣC / ΣL по prefill-строкам")]);
 
   // 7. Breakdown by scheduler and cache.
   s = section("Разбивка по планировщику и кэшу", "Test-прогоны: \\(|e|\\) и средний знак \\(T_{\\mathrm{total}}\\).");
@@ -416,13 +1244,18 @@ function renderModel() {
   // 8. Prefill function form: forms with a per-run factor, R dependence, noise.
   const pfm = D.prefill_forms;
   if (pfm && pfm.run_factor) {
-    s = section("Форма prefill: какая функция описывает время",
-      `Только prefill-шаги: ${pfm.n_steps} шагов в ${pfm.n_runs} прогонах. Время шага \\(=\\) форма \\(\\times\\) множитель прогона (состояние общей машины), ` +
-      "поэтому форма подбирается с отдельным множителем на каждый прогон и проверяется так: шаг предсказывается по форме, подобранной без него, и по множителю его прогона, оценённому на остальных шагах этого прогона.");
+    const own = pfm.run_factor_used === false;
+    s = section("Форма prefill: какая функция описывает время", own
+      ? `Только prefill-шаги train-сеток: ${pfm.n_steps} шагов в ${pfm.n_runs} прогонах, ${pfm.n_groups} точек сетки. Машина одна и частота зафиксирована, а у прогона сетки обычно один prefill-шаг, ` +
+        "поэтому формы подбираются без множителя прогона и проверяются leave-one-point-out: все повторы одной точки сетки уходят в test вместе."
+      : `Только prefill-шаги: ${pfm.n_steps} шагов в ${pfm.n_runs} прогонах. Время шага \\(=\\) форма \\(\\times\\) множитель прогона (состояние общей машины), ` +
+        "поэтому форма подбирается с отдельным множителем на каждый прогон и проверяется так: шаг предсказывается по форме, подобранной без него, и по множителю его прогона, оценённому на остальных шагах этого прогона.");
     const rf = pfm.run_factor, rq = pfm.request_R;
-    s.append(el("p", {}, `Лучшая форма: \\(${pfm.best_latex}\\) — ошибка внутри прогона ${pct(pfm.table[0].in_run_mean)}. ` +
-      `Множитель прогона \\(\\in [${rf.p05.toFixed(2)},\\ ${rf.p95.toFixed(2)}]\\) (5–95%): без него у нового прогона ошибка около ${pct(pfm.table[0].set_cv_mean)}. ` +
-      (pfm.cached_to_new_cost != null ? `Токен с готовым KV стоит \\(e/a = ${pfm.cached_to_new_cost.toFixed(2)}\\) от нового.` : "")));
+    const cost = pfm.cached_to_new_cost != null ? `Токен с готовым KV стоит \\(e/a = ${pfm.cached_to_new_cost.toFixed(2)}\\) от нового.` : "";
+    s.append(el("p", {}, own
+      ? `Лучшая форма: \\(${pfm.best_latex}\\) — ошибка на отложенной точке сетки ${pct(pfm.table[0].set_cv_mean)}. ${cost}`
+      : `Лучшая форма: \\(${pfm.best_latex}\\) — ошибка внутри прогона ${pct(pfm.table[0].in_run_mean)}. ` +
+        `Множитель прогона \\(\\in [${rf.p05.toFixed(2)},\\ ${rf.p95.toFixed(2)}]\\) (5–95%): без него у нового прогона ошибка около ${pct(pfm.table[0].set_cv_mean)}. ${cost}`));
     if (rq.hit_count) s.append(el("p", { class: "lede" }, `Строк с \\(C > 0\\): ${rq.hit_count}, \\(R \\in [${rq.hit_min?.toFixed(2)},\\ ${rq.hit_max?.toFixed(2)}]\\); строк с \\(R = 0\\): ${rq.zero_count}. ` +
       `У шагов с \\(C > 0\\) \\(R_{\\mathrm{step}} \\in [${rq.step_R_min_on?.toFixed(2)},\\ ${rq.step_R_max_on?.toFixed(2)}]\\).`));
     const formCoef = (c) => `\\(${Object.entries(c).map(([k, v]) => `${k === "alpha" ? "\\alpha" : texName(k)} = ${texNum(v)}`).join(",\\ ")}\\)`;
@@ -433,7 +1266,7 @@ function renderModel() {
       { label: "внутри прогона: средняя", key: "in_run_mean", fmt: (v) => pct(v) },
       { label: "медиана", key: "in_run_median", fmt: (v) => pct(v) },
       { label: "максимум", key: "in_run_max", fmt: (v) => pct(v) },
-      { label: "новый прогон (leave-one-set-out)", key: "set_cv_mean", fmt: (v) => pct(v) },
+      { label: own ? "отложенная точка (leave-one-point-out)" : "новый прогон (leave-one-set-out)", key: "set_cv_mean", fmt: (v) => pct(v) },
       { label: "коэффициенты", value: (r) => formCoef(r.coef), text: true },
     ]);
     row = chartRow(s);
@@ -445,16 +1278,9 @@ function renderModel() {
     chart(row, () => {
       const traces = byCache("R_step", "per_token", (r) => `${r.run_id} ${r.step_id}<br>R ${r.R_step.toFixed(2)}, B ${r.B}<br>ΣL ${r.sumL}, ΣC ${r.sumC}<br>${r.per_token.toFixed(3)}`);
       traces.push({ type: "scatter", mode: "lines", name: `форма для запроса L = ${Math.round(pfm.r_curve.L_ref)}`, x: pfm.r_curve.x, y: pfm.r_curve.y, line: { color: css("--fg"), width: 2 }, hoverinfo: "skip" });
-      return [traces, baseLayout("T / T(R = 0) от R", "R = ΣC / ΣL", "T / T(R = 0), без множителя прогона и d·B")];
+      return [traces, baseLayout("T / T(R = 0) от R", "R = ΣC / ΣL (кэш + нарезка)", "T / T(R = 0), без множителя прогона и d·B")];
     });
     chart(row, () => [byCache("N", "T_norm", (r) => `${r.run_id} ${r.step_id}<br>N ${r.N}, B ${r.B}, R ${r.R_step.toFixed(2)}<br>T ${r.T.toFixed(3)} s, без множителя ${r.T_norm.toFixed(3)} s`), baseLayout("T / множитель от N", "N — считаемые токены шага", "T / множитель прогона, s")]);
-    chart(row, () => {
-      const xs = pfm.pairs.map((p) => p.x), ys = pfm.pairs.map((p) => p.y);
-      return [[{ type: "scatter", mode: "markers", name: "одинаковый состав, разные прогоны", x: xs, y: ys,
-        marker: { color: partColor("test"), size: 8, line: { width: 1, color: css("--bg") } },
-        text: pfm.pairs.map((p) => `${p.a} vs ${p.b}<br>N ${p.N}<br>${p.x.toFixed(3)} s vs ${p.y.toFixed(3)} s`), hovertemplate: "%{text}<extra></extra>" },
-        identityLine(xs, ys)], baseLayout("Одинаковые шаги", "T в одном прогоне, s", "T в другом прогоне, s")];
-    });
   }
 
   // 9. Transfer sources.
@@ -505,7 +1331,7 @@ function renderReport(index) {
     ].map((t) => el("span", {}, t))));
   const sw = el("div", { class: "switch", role: "group", "aria-label": "Модель" });
   DOC.models.forEach((m, i) => {
-    const b = el("button", { type: "button", "aria-pressed": String(i === index) }, m.label);
+    const b = el("button", { type: "button", "aria-pressed": String(i === index) }, m.caveat ? `${m.label} · ${m.caveat}` : m.label);
     b.addEventListener("click", () => {
       if (i === index) return;
       try { history.replaceState(null, "", "#m" + (i + 1)); } catch (e) { /* the viewer may refuse */ }
@@ -515,7 +1341,11 @@ function renderReport(index) {
   });
   header.append(sw);
   app.append(header);
-  renderModel();
+  const summary = summaryTable();
+  if (summary) app.append(summary);
+  if (D.caveat) app.append(el("p", { class: "banner" }, el("strong", {}, `${D.label}: ${D.caveat}.`),
+    " Сервер общий: состояние машины (частота, чужие задачи) меняется от прогона к прогону, поэтому ошибки здесь — сумма ошибки модели и шума машины. Чистые данные — у Qwen3-0.6B local."));
+  if (D.kind === "vidur") renderVidur(); else renderModel();
 }
 
 function renderIndex() {

@@ -1,0 +1,44 @@
+# Datasheet peaks used by the Vidur check, each with its source.
+# bf16_tflops: dense BF16 tensor-core peak (no sparsity); mem_gbs: memory bandwidth.
+gpus:
+  a40:
+    name: NVIDIA A40 (Ampere)
+    bf16_tflops: 149.7
+    mem_gbs: 696
+    source: "NVIDIA A40 datasheet: BF16 Tensor Core 149.7 TFLOPS (299.4 with sparsity); 48 GB GDDR6, 696 GB/s"
+  a100:
+    name: NVIDIA A100 SXM4 80GB (Ampere)
+    bf16_tflops: 312
+    mem_gbs: 2039
+    source: "NVIDIA A100 datasheet: BF16 Tensor Core 312 TFLOPS (624 with sparsity); 80GB SXM 2,039 GB/s. SXM assumed: Vidur's network profiles are a100_dgx"
+  h100:
+    name: NVIDIA H100 SXM5 80GB (Hopper)
+    bf16_tflops: 989.4
+    mem_gbs: 3350
+    source: "NVIDIA H100 datasheet: BF16 Tensor Core 1,979 TFLOPS with sparsity (989.4 dense); SXM 3.35 TB/s. SXM assumed: Vidur's network profiles are h100_dgx"
+  a4000:
+    name: NVIDIA RTX A4000 (Ampere)
+    bf16_tflops: 76.7
+    mem_gbs: 448
+    source: "NVIDIA RTX A4000 datasheet: Tensor performance 153.4 TFLOPS with sparsity (76.7 dense); 16 GB GDDR6, 448 GB/s"
+  rtx4070_laptop:
+    name: NVIDIA RTX 4070 Laptop (Ada), SM locked at 2100 MHz
+    bf16_tflops: 38.7
+    mem_gbs: 256
+    source: "36 SM × 512 BF16 FLOP/clk/SM (Ada whitepaper, as in results/steptime) × 2.1 GHz locked; GDDR6 16 Gbps × 128 bit = 256 GB/s"
+
+# Our three branches, for comparing ratios with Vidur (layer dimensions from the
+# models' config.json; coefficients are read from the time-model run).
+ours:
+  - label: Qwen3-0.6B local
+    gpu: rtx4070_laptop
+    tp: 1
+    dims: {hidden: 1024, n_q: 16, n_kv: 8, d_head: 128, intermediate: 3072, layers: 28, gated: true}
+  - label: Qwen3-8B long context
+    gpu: a4000
+    tp: 2
+    dims: {hidden: 4096, n_q: 32, n_kv: 8, d_head: 128, intermediate: 12288, layers: 36, gated: true}
+  - label: Qwen3-0.6B
+    gpu: a4000
+    tp: 2
+    dims: {hidden: 1024, n_q: 16, n_kv: 8, d_head: 128, intermediate: 3072, layers: 28, gated: true}

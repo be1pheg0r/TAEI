@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 
-def run_isolated(payload: dict[str, Any], timeout_s: float) -> dict[str, Any]:
+def run_isolated(payload: dict[str, Any], timeout_s: float) -> Any:
     """Execute worker payload; timeout kills its complete process group."""
     with tempfile.TemporaryDirectory(prefix="taei-attempt-") as tmp:
         request = Path(tmp) / "request.json"
@@ -35,6 +35,15 @@ def run_isolated(payload: dict[str, Any], timeout_s: float) -> dict[str, Any]:
             _, _ = process.communicate(timeout=timeout_s)
         except subprocess.TimeoutExpired as timeout_error:
             _stop_group(process.pid, process, 0.5)
+            if "run_specs" in payload:
+                # Keep the finished attempts; the stuck one is reported as such.
+                done = (
+                    json.loads(response.read_text(encoding="utf-8"))
+                    if response.exists()
+                    else []
+                )
+                stuck = payload["run_specs"][len(done)]["run_id"]
+                return [*done, {"run_id": stuck, "status": "timeout"}]
             diagnostic = Path(
                 payload.get(
                     "diagnostic_path",
@@ -52,6 +61,8 @@ def run_isolated(payload: dict[str, Any], timeout_s: float) -> dict[str, Any]:
             ) from timeout_error
         finally:
             _stop_group(process.pid, process, 0.5)
+        if "run_specs" in payload and not response.exists():
+            return []  # the worker died before its first attempt finished
         result = json.loads(response.read_text(encoding="utf-8"))
         return result
 
@@ -99,6 +110,18 @@ def _worker(request: Path, response: Path) -> None:
     data = json.loads(request.read_text(encoding="utf-8"))
     configure_logging(config=data.pop("logging_config", {}))
     data.pop("diagnostic_path", None)
+    if "run_specs" in data:
+        from .orchestrator import run_attempts
+
+        # Rewritten after every attempt, so a crash keeps the finished ones.
+        done: list[dict] = []
+
+        def save(result: dict) -> None:
+            done.append(result)
+            response.write_text(json.dumps(done), encoding="utf-8")
+
+        run_attempts(**data, on_result=save)
+        return
     from .orchestrator import run_attempt
 
     result = run_attempt(**data)

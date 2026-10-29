@@ -15,7 +15,7 @@ import math
 import numpy as np
 import pandas as pd
 
-from . import prices
+from . import checks, prices
 from .decode import LATEX as DECODE_LATEX
 from .evaluate import TRAIN_SOURCE, Evaluation
 from .fit import LATEX as FIT_LATEX
@@ -29,7 +29,7 @@ NOTATION = [
     [r"R = C / L", "доля токенов из кэша"],
     [r"\ell", "текущая длина контекста запроса в decode-шаге"],
     [r"B", "число запросов в decode-шаге"],
-    [r"I", "входные токены за время T (все токены промпта, включая кэш)"],
+    [r"I", "новые (не кэшированные) входные токены за время T: \\(\\sum L(1 - R)\\)"],
     [r"O", "выходные токены за время T"],
     [
         r"\mathrm{ITPS} = I / T,\ \mathrm{OTPS} = O / T",
@@ -55,15 +55,15 @@ FORMULAS = [
     },
     {
         "title": "Цены токенов",
-        "text": r"Для нагрузки (набора запросов) — взвешенные по токенам, а не среднее "
-        r"прямых. \(\sum L\) здесь — все токены промптов, то есть \(I\): кусок chunked "
-        r"prefill и пересчёт не считаются дважды.",
+        "text": r"Входной токен — только новый, не кэшированный: цена делится на "
+        r"\(L(1 - R)\), а \(I\) — сумма новых токенов. Для нагрузки (набора запросов) "
+        r"— взвешенные по токенам, а не среднее прямых.",
         "latex": [
-            r"\tilde a = \frac{T_{\mathrm{pf}}}{L} = a(1 - R) + b L (1 - R^2) + "
-            r"\frac{c}{L}",
+            r"\tilde a = \frac{T_{\mathrm{pf}}}{L(1 - R)} = a + b L (1 + R) + "
+            r"\frac{c}{L(1 - R)}",
             r"\tilde b = \frac{T_{\mathrm{dc}}}{B} = \frac{d_0}{B} + d_1 \bar\ell "
             r"+ d_2",
-            r"\tilde a = \frac{\sum T_{\mathrm{pf}}}{\sum L}, \qquad "
+            r"\tilde a = \frac{\sum T_{\mathrm{pf}}}{I}, \qquad "
             r"\tilde b = \frac{\sum T_{\mathrm{dc}}}{\sum O}",
         ],
     },
@@ -87,11 +87,33 @@ FORMULAS = [
 ]
 
 SCHEMA_VERSION = 2
-DECODE_SAMPLE = 4000
+DECODE_SAMPLE = 2500
+# Plotting caps per source for large sets; statistics always use every row.
+PREFILL_SAMPLE = 2500
+REQUEST_SAMPLE = 2000
+WINDOW_SAMPLE = 3000
+COVERAGE_SAMPLE = 4000
+
+
+def _cap(frame: pd.DataFrame, n: int) -> pd.DataFrame:
+    """At most ``n`` rows per source, a fixed random sample."""
+    return pd.concat(
+        [
+            g.sample(n, random_state=0) if len(g) > n else g
+            for _, g in frame.groupby("source", sort=False)
+        ]
+    )
+
+
+def _values(values, n: int = COVERAGE_SAMPLE) -> list:
+    v = pd.Series(values)
+    return (v.sample(n, random_state=0) if len(v) > n else v).tolist()
 
 
 def clean(value):
-    """Recursively convert numpy/pandas values and NaN into JSON-safe values."""
+    """Recursively convert numpy/pandas values and NaN into JSON-safe values.
+
+    Floats keep six significant digits."""
     if isinstance(value, dict):
         return {str(k): clean(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -100,7 +122,9 @@ def clean(value):
         return int(value)
     if isinstance(value, (float, np.floating)):
         value = float(value)
-        return None if math.isnan(value) or math.isinf(value) else value
+        if math.isnan(value) or math.isinf(value):
+            return None
+        return float(f"{value:.6g}")  # six significant digits keep the page small
     if isinstance(value, np.bool_):
         return bool(value)
     if isinstance(value, np.ndarray):
@@ -179,22 +203,38 @@ def _span(values) -> str:
     return f"{v.min():,.0f}–{v.max():,.0f}".replace(",", " ")
 
 
+def _timed_arrivals(data) -> bool:
+    """Requests of some run arrive over more than a second (timed arrivals)."""
+    enqueue = data.requests.groupby("run_id")["enqueue_ns"]
+    return bool(((enqueue.max() - enqueue.min()) * 1e-9 > 1.0).any())
+
+
+def _fixed_context_runs(data) -> int:
+    """Runs whose requests share one prompt and output length (decode grid)."""
+    req = data.requests.groupby("run_id").agg(
+        prompts=("prompt", "nunique"), outs=("O_requested", "nunique"), O=("O", "max")
+    )
+    return int(((req["prompts"] == 1) & (req["outs"] == 1) & (req["O"] > 1)).sum())
+
+
 def pipeline(ev: Evaluation, labels: dict[str, str]) -> list[dict]:
     """Project pipeline steps with what the data of this model has and lacks."""
     have = {k: [] for k in ("prefill", "decode", "total", "load")}
     missing = {k: [] for k in have}
+    arrivals = False
     for source, data in ev.datasets.items():
         name = labels.get(source, source)
         reqs, runs = data.prefill_requests, data.runs
-        hits = reqs[reqs["C"] > 0]
         decode_one = (data.requests.groupby("run_id")["O_requested"].max() == 1).sum()
         text = f"{name}: L {_span(data.requests['prompt'])}"
-        if len(hits):
+        for col, tag in (("R_cache", "R_кэш"), ("R_chunk", "R_нарезка")):
+            rows = reqs[reqs[col] > 0]
             text += (
-                f", R {hits['R'].min():.2f}–{hits['R'].max():.2f} у {len(hits)} строк"
+                f", {tag} {rows[col].min():.2f}–{rows[col].max():.2f} у {len(rows)} "
+                "строк"
+                if len(rows)
+                else f", {tag} = 0"
             )
-        else:
-            text += ", R = 0"
         if decode_one:
             text += f"; {decode_one} прогонов с decode = 1"
         have["prefill"].append(text + ".")
@@ -211,12 +251,16 @@ def pipeline(ev: Evaluation, labels: dict[str, str]) -> list[dict]:
                 f"{name}: контексты {', '.join(gaps)} не мерились."
             )
         dc = data.decode_steps
-        outputs = sorted(data.requests["O_requested"].unique())
+        outputs = sorted(int(o) for o in data.requests["O_requested"].unique())
+        out_text = (
+            ", ".join(map(str, outputs))
+            if len(outputs) <= 8
+            else f"{len(outputs)} значений от {outputs[0]} до {outputs[-1]}"
+        )
         if len(dc):
             have["decode"].append(
                 f"{name}: Σℓ {_span(dc['sum_l'])}, B {int(dc['B'].min())}–"
-                f"{int(dc['B'].max())}, длины генерации "
-                f"{', '.join(str(int(o)) for o in outputs)}."
+                f"{int(dc['B'].max())}, длины генерации {out_text}."
             )
         have["total"].append(
             f"{name}: {len(runs)} прогонов"
@@ -234,18 +278,39 @@ def pipeline(ev: Evaluation, labels: dict[str, str]) -> list[dict]:
             + "."
         )
         enqueue = data.requests.groupby("run_id")["enqueue_ns"]
-        spread = (enqueue.max() - enqueue.min()).max() * 1e-9
-        have["load"].append(
-            f"{name}: все запросы прогона приходят за {spread * 1e3:.0f} мс."
+        spread = (enqueue.max() - enqueue.min()) * 1e-9
+        timed = spread[spread > 1.0]
+        if len(timed):
+            arrivals = True
+            have["load"].append(
+                f"{name}: приход запросов во времени в {len(timed)} прогонах "
+                f"(запросы приходят за {timed.min():.0f}–{timed.max():.0f} с)."
+            )
+        else:
+            have["load"].append(
+                f"{name}: все запросы прогона приходят за {spread.max() * 1e3:.0f} мс."
+            )
+    fixed = {
+        labels.get(source, source): _fixed_context_runs(data)
+        for source, data in ev.datasets.items()
+    }
+    fixed = {name: n for name, n in fixed.items() if n}
+    if fixed:
+        have["decode"].append(
+            "Одинаковые запросы в прогоне (B постоянен до конца генерации): "
+            + ", ".join(f"{name} ({n} прогонов)" for name, n in fixed.items())
+            + "."
         )
-    missing["decode"].append(
-        "Эксперимента «контекст фиксирован, длина генерации 1…256» нет: длина "
-        "генерации не менялась при фиксированном контексте."
-    )
-    missing["load"].append(
-        "Приход запросов во времени не варьировался, поэтому модель очереди "
-        "проверить не на чем."
-    )
+    else:
+        missing["decode"].append(
+            "Эксперимента «контекст фиксирован, длина генерации 1…256» нет: длина "
+            "генерации не менялась при фиксированном контексте."
+        )
+    if not arrivals:
+        missing["load"].append(
+            "Приход запросов во времени не варьировался, поэтому модель очереди "
+            "проверить не на чем."
+        )
     return [
         {
             "title": "Вопросы",
@@ -292,14 +357,35 @@ def pipeline(ev: Evaluation, labels: dict[str, str]) -> list[dict]:
     ]
 
 
-def build(ev: Evaluation, label: str, meta: dict, notes: list[str]) -> dict:
-    """Assemble one model's section of the report document."""
+def build(
+    ev: Evaluation,
+    label: str,
+    meta: dict,
+    notes: list[str],
+    forms: dict | None = None,
+    local: dict | None = None,
+    window: dict | None = None,
+    caveats: dict[str, str] | None = None,
+    caveat: str | None = None,
+) -> dict:
+    """Assemble one model's section of the report document.
+
+    ``forms`` is the prefill form analysis (by default on the whole train
+    dataset); ``local`` is the local-grid block of the 0.6B local model;
+    ``window`` — ``{seconds, min_steps}`` of the ITPS–OTPS time windows;
+    ``caveats`` — a note per transfer source whose errors are not a check of
+    the model (for example, a loaded machine); ``caveat`` — a note on the whole
+    model (for example, a noisy machine).
+    """
+    window = window or {"seconds": 5.0, "min_steps": 5}
+    caveats = caveats or {}
     labels = {**meta.get("labels", {}), TRAIN_SOURCE: label}
     sources = [
         {
             "id": source,
             "label": labels.get(source, source),
             "role": "train" if source == TRAIN_SOURCE else "transfer",
+            "caveat": caveats.get(source),
             "runs": len(data.runs),
             "prefill_steps": len(data.prefill_steps),
             "decode_steps": len(data.decode_steps),
@@ -314,21 +400,30 @@ def build(ev: Evaluation, label: str, meta: dict, notes: list[str]) -> dict:
     )
     step_lr = (
         reqs.groupby(["source", "run_id", "step_id"])
-        .agg(L_mean=("L", "mean"), L_sum=("L", "sum"), C_sum=("C", "sum"))
+        .agg(
+            L_mean=("L", "mean"),
+            L_sum=("L", "sum"),
+            C_sum=("C", "sum"),
+            C_cache_sum=("C_cache", "sum"),
+            C_chunk_sum=("C_chunk", "sum"),
+        )
         .reset_index()
     )
     step_lr["R_step"] = step_lr["C_sum"] / step_lr["L_sum"]
+    step_lr["R_cache_step"] = step_lr["C_cache_sum"] / step_lr["L_sum"]
+    step_lr["R_chunk_step"] = step_lr["C_chunk_sum"] / step_lr["L_sum"]
     pf = ev.prefill_steps.merge(step_lr, on=["source", "run_id", "step_id"], how="left")
-    # R views use only steps with cached tokens: cache-off runs put every step at
-    # R = 0 and would hide the dependence.
-    cached = pf[pf["R_step"] > 0]
-    prefill_binned = {
-        "L_mean": binned(pf, "L_mean", "rel_err", bins=8),
-        "R_step": binned(cached, "R_step", "rel_err", bins=6),
+    # R views use only steps where that part of R is positive: cache-off runs
+    # put every step at R_кэш = 0 and would hide the dependence.
+    prefill_binned = {"L_mean": binned(pf, "L_mean", "rel_err", bins=8)}
+    for col in ("R_cache_step", "R_chunk_step"):
+        prefill_binned[col] = binned(pf[pf[col] > 0], col, "rel_err", bins=6)
+    train_pf = pf[pf["source"] == TRAIN_SOURCE]
+    r_kind = "R_cache_step" if (train_pf["R_cache_step"] > 0).any() else "R_chunk_step"
+    prefill_grid = {
+        **grid(train_pf[train_pf[r_kind] > 0], "L_mean", r_kind, "rel_err"),
+        "r_kind": r_kind,
     }
-    prefill_grid = grid(
-        cached[cached["source"] == TRAIN_SOURCE], "L_mean", "R_step", "rel_err"
-    )
 
     # Decode: a plotting sample per source, binned statistics on all steps.
     dc = ev.decode_steps
@@ -359,19 +454,22 @@ def build(ev: Evaluation, label: str, meta: dict, notes: list[str]) -> dict:
     )
 
     requests = prices.requests(ev)
+    windows = prices.windows(ev, float(window["seconds"]), int(window["min_steps"]))
     coverage_values, coverage = {}, []
     for source, data in ev.datasets.items():
         dsample = sample[sample["source"] == source]
         coverage_values[source] = {
-            "L": data.prefill_requests["L"].tolist(),
-            "R": data.prefill_requests["R"].tolist(),
+            "L": _values(data.prefill_requests["L"]),
+            "R_кэш": _values(data.prefill_requests["R_cache"]),
+            "R_нарезка": _values(data.prefill_requests["R_chunk"]),
             "B": dsample["B"].tolist(),
             "Σℓ": dsample["sum_l"].tolist(),
-            "O": data.requests["O"].tolist(),
+            "O": _values(data.requests["O"]),
         }
         full = {
             "L": data.prefill_requests["L"],
-            "R": data.prefill_requests["R"],
+            "R_кэш": data.prefill_requests["R_cache"],
+            "R_нарезка": data.prefill_requests["R_chunk"],
             "B": data.decode_steps["B"],
             "Σℓ": data.decode_steps["sum_l"],
             "O": data.requests["O"],
@@ -407,11 +505,14 @@ def build(ev: Evaluation, label: str, meta: dict, notes: list[str]) -> dict:
         "rel_err",
         "prefill_seconds",
         "prefill_hat",
+        "steps_seconds",
         "I",
         "O",
         "lost_tokens",
         "L_mean",
         "R_run",
+        "R_cache_run",
+        "R_chunk_run",
     ]
     return clean(
         {
@@ -442,9 +543,51 @@ def build(ev: Evaluation, label: str, meta: dict, notes: list[str]) -> dict:
             "prices": {
                 "lines": prices.lines(ev),
                 "runs": prices.run_prices(ev).to_dict(orient="records"),
+                "windows": {
+                    **window,
+                    "summary": prices.window_summary(windows),
+                    "points": _records(
+                        _cap(windows[windows["part"] != "unused"], WINDOW_SAMPLE),
+                        [
+                            "source",
+                            "part",
+                            "run_id",
+                            "w",
+                            "T_w",
+                            "steps",
+                            "I_w",
+                            "O_w",
+                            "ITPS",
+                            "OTPS",
+                            "a_w",
+                            "b_w",
+                            "x",
+                            "y",
+                            "share",
+                        ],
+                    ),
+                },
+            },
+            "arrivals": any(_timed_arrivals(d) for d in ev.datasets.values()),
+            "caveat": caveat,
+            "summary": checks.summary_cells(
+                ev, windows, requests, labels, include_train=local is not None
+            ),
+            "prefill_checks": checks.prefill_checks(ev),
+            "decode_checks": checks.decode_checks(ev),
+            "request_groups": checks.request_groups(
+                requests,
+                {
+                    r["run_id"]: r["rho"]
+                    for r in (local or {}).get("arrivals", {}).get("runs", [])
+                },
+            ),
+            "quality": {
+                "off_steps": checks.off_steps(ev),
+                "spikes": checks.spikes(ev, labels),
             },
             "requests": _records(
-                requests,
+                _cap(requests, REQUEST_SAMPLE),
                 [
                     "source",
                     "part",
@@ -463,7 +606,7 @@ def build(ev: Evaluation, label: str, meta: dict, notes: list[str]) -> dict:
                 ],
             ),
             "prefill_steps": _records(
-                pf,
+                _cap(pf, PREFILL_SAMPLE),
                 [
                     "source",
                     "part",
@@ -474,6 +617,8 @@ def build(ev: Evaluation, label: str, meta: dict, notes: list[str]) -> dict:
                     "rel_err",
                     "L_mean",
                     "R_step",
+                    "R_cache_step",
+                    "R_chunk_step",
                     "new",
                     "quad",
                 ],
@@ -485,7 +630,10 @@ def build(ev: Evaluation, label: str, meta: dict, notes: list[str]) -> dict:
             "decode_binned": decode_binned,
             "prefill_binned": prefill_binned,
             "prefill_grid": prefill_grid,
-            "prefill_forms": analyze_prefill_forms(ev.datasets[TRAIN_SOURCE]),
+            "prefill_forms": forms
+            if forms is not None
+            else analyze_prefill_forms(ev.datasets[TRAIN_SOURCE]),
+            "local": local,
             "coverage": coverage,
             "coverage_values": coverage_values,
             "notes": notes,
@@ -494,5 +642,16 @@ def build(ev: Evaluation, label: str, meta: dict, notes: list[str]) -> dict:
 
 
 def document(meta: dict, models: list[dict]) -> dict:
-    """The whole report: shared metadata and one section per fitted model."""
-    return clean({"schema_version": SCHEMA_VERSION, "meta": meta, "models": models})
+    """The whole report: shared metadata, the summary of checks over every data
+    set, and one section per fitted model."""
+    summary = [
+        {**cell, "model": m["label"]} for m in models for cell in m.get("summary", [])
+    ]
+    return clean(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "meta": meta,
+            "summary": summary,
+            "models": models,
+        }
+    )

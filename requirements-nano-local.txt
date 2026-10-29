@@ -1,0 +1,23 @@
+# Local single-GPU nano-vLLM collector (RTX 4070 Laptop, driver 535 / CUDA 12.2).
+# The locked `inference` extra needs CUDA 13 (driver >= 580); this keeps the same
+# torch and flash-attn versions built for CUDA 12.6. Install:
+#   uv venv .venv-nano --python 3.12
+#   uv pip install --python .venv-nano --index-strategy unsafe-best-match -r requirements-nano-local.txt
+#   uv pip install --python .venv-nano --no-deps -e .
+--extra-index-url https://download.pytorch.org/whl/cu126
+--extra-index-url https://wheels.astral.sh/simple/cu126/
+torch==2.14.1+cu126
+flash-attn==2.8.3.post1+cu.12.6.torch.2.14
+nano-vllm @ git+https://github.com/GeeeekExplorer/nano-vllm.git@bb823b3e06983d71485a8e1f23715ebd87d98ef8
+transformers==5.20.2
+nvidia-ml-py==13.615.71
+clearml>=2.1.12
+filelock>=3.12
+hydra-core>=1.3.2
+huggingface-hub>=0.34.0
+jsonschema>=4.25.0
+loguru>=0.7.3
+python-dotenv>=1.2.4
+rich>=15.0.0
+xxhash>=3.5.0
+pytest>=9.1.1

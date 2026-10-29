@@ -12,7 +12,13 @@ chunked prefill (свой готовый KV). Время шага домножа
 
 Оценка формы: (1) с множителем прогона — каждый шаг предсказывается по форме,
 подобранной без него, и по множителю, оценённому на остальных шагах того же
-прогона; (2) без множителя — leave-one-set-out, как будет у нового прогона.
+прогона; (2) без множителя — leave-one-group-out, как будет у нового прогона
+(группа — набор ``set_id``, у локальной сетки — точка сетки ``workload`` со
+всеми её повторами).
+
+На своей GPU с фиксированной частотой машина одна и та же, а у прогона сетки
+обычно один prefill-шаг: тогда ``run_factor=False`` — формы подбираются без
+множителя и ранжируются только по leave-one-group-out.
 """
 
 from __future__ import annotations
@@ -50,7 +56,7 @@ COEF_NAMES = {
 }
 
 
-def step_table(data: Dataset) -> pd.DataFrame:
+def step_table(data: Dataset, group: str = "set_id") -> pd.DataFrame:
     reqs = data.prefill_requests
     content = (
         reqs.sort_values("request_id")
@@ -69,7 +75,10 @@ def step_table(data: Dataset) -> pd.DataFrame:
     steps = (
         data.prefill_steps.merge(sums.reset_index(), on=["run_id", "step_id"])
         .merge(content.reset_index(), on=["run_id", "step_id"])
-        .merge(data.runs[["run_id", "set_id", "cache", "scheduler"]], on="run_id")
+        .merge(
+            data.runs[["run_id", "cache", "scheduler"]].assign(group=data.runs[group]),
+            on="run_id",
+        )
     )
     steps["N"], steps["Q"] = steps["new"], steps["quad"]
     steps["N2"] = steps["N"] ** 2
@@ -128,7 +137,7 @@ def _within_run_loo(steps, cols) -> np.ndarray:
 
 
 def _set_cv(steps, cols) -> np.ndarray:
-    groups = steps["set_id"].to_numpy()
+    groups = steps["group"].to_numpy()
     oof = np.full(len(steps), np.nan)
     for g in np.unique(groups):
         coef = _fit_pooled(steps[groups != g], cols)
@@ -146,7 +155,7 @@ def _power_set_cv(steps) -> tuple[np.ndarray, dict]:
         ).x
         return np.exp(t[0]), np.exp(t[1]), t[2]
 
-    groups = steps["set_id"].to_numpy()
+    groups = steps["group"].to_numpy()
     oof = np.full(len(steps), np.nan)
     for g in np.unique(groups):
         c, a, alpha = fit(steps[groups != g])
@@ -156,12 +165,19 @@ def _power_set_cv(steps) -> tuple[np.ndarray, dict]:
     return np.abs(oof - y) / y, {"a": float(a), "alpha": float(alpha), "c": float(c)}
 
 
-def analyze(data: Dataset) -> dict:
-    steps = step_table(data)
+def _fit(steps, cols, run_factor: bool):
+    if run_factor:
+        return fit_with_run_factor(steps, cols)
+    runs = steps["run_id"].unique()
+    return _fit_pooled(steps, cols), pd.Series(1.0, index=runs)
+
+
+def analyze(data: Dataset, group: str = "set_id", run_factor: bool = True) -> dict:
+    steps = step_table(data, group)
     table = []
     for name, tex, cols in FORMS:
-        coef, _ = fit_with_run_factor(steps, cols)
-        in_run = _within_run_loo(steps, cols)
+        coef, _ = _fit(steps, cols, run_factor)
+        in_run = _within_run_loo(steps, cols) if run_factor else np.array([])
         pooled = _set_cv(steps, cols)
         table.append(
             {
@@ -196,7 +212,7 @@ def analyze(data: Dataset) -> dict:
         else min(table[:-1], key=lambda r: r["set_cv_mean"])
     )
     best_cols = next(cols for name, _, cols in FORMS if name == best["name"])
-    coef, factors = fit_with_run_factor(steps, best_cols)
+    coef, factors = _fit(steps, best_cols, run_factor)
     c = _coef_dict(best_cols, coef)
 
     # R dependence: step time with the run factor and per-request overhead
@@ -219,7 +235,8 @@ def analyze(data: Dataset) -> dict:
     ) / (a * l_ref + b * l_ref**2)
     on = steps["sumC"] > 0
 
-    # Noise floor: identical step content measured in different runs.
+    # Noise floor: identical step content measured in different runs (the
+    # first two of each group are paired).
     dup = steps.groupby("content").filter(lambda g: len(g) > 1)
     dev = (dup["T"] / dup.groupby("content")["T"].transform("mean") - 1).abs()
     pairs = [
@@ -231,7 +248,6 @@ def analyze(data: Dataset) -> dict:
             "N": float(g["N"].iloc[0]),
         }
         for _, g in dup.groupby("content")
-        if len(g) == 2
     ]
     return {
         "table": sorted(
@@ -283,5 +299,7 @@ def analyze(data: Dataset) -> dict:
         },
         "n_steps": int(len(steps)),
         "n_runs": int(steps["run_id"].nunique()),
-        "n_groups": int(steps["set_id"].nunique()),
+        "n_groups": int(steps["group"].nunique()),
+        "group": group,
+        "run_factor_used": run_factor,
     }

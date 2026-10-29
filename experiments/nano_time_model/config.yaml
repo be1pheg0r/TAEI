@@ -19,13 +19,36 @@ fit: optuna # optuna (mean relative error) | regression (NNLS on relative error)
 seed: 42 # train/test split and optuna sampler
 optuna:
   trials: 1500
+extra_branches: [] # finished branch documents appended to the report, e.g. runs/<t>/vidur.json
+windows: # ITPS–OTPS by time windows inside runs (section 03)
+  seconds: 5.0
+  min_steps: 5 # windows with fewer steps are dropped
 
 models: # each model gets its own coefficients, split and transfer checks
-  - label: Qwen3-0.6B
-    runs_dir: data/qwen-3-06b-768/20261025T092821.424493Z-6636be4c/runs
-    run_ids: null # all successful runs
-    split_by: [set_id, cache]
-    transfer: []
+  - label: Qwen3-0.6B local
+    # Own RTX 4070 Laptop, TP=1, SM 2100 MHz (docs/nano-vllm-local.md).
+    runs_dir: [data/qwen-3-06b-local/phase_A/runs, data/qwen-3-06b-local/phase_B/runs]
+    run_ids: null
+    series: [S1, S2, S3]
+    split_by: {train: [S1, S2], test: [S3]} # grids train, prefill-share mixes test
+    transfer:
+      - label: Qwen3-0.6B local S4 (поток запросов)
+        runs_dir: [data/qwen-3-06b-local/phase_B/runs]
+        run_ids: null
+        series: [S4]
+      - label: Qwen3-0.6B local S0 (серверная нагрузка)
+        runs_dir: [data/qwen-3-06b-local/phase_A/runs]
+        run_ids: null
+        series: [S0]
+      - label: Qwen3-0.6B local S5 (перенос)
+        # Closed loop: exactly N requests in the system (phase C).
+        runs_dir: [data/qwen-3-06b-local/phase_C/runs]
+        run_ids: null
+        series: [S5]
+    local:
+      plans: [data/qwen-3-06b-local/phase_A/plan.json, data/qwen-3-06b-local/phase_B/plan.json, data/qwen-3-06b-local/phase_C/plan.json]
+      roots: [data/qwen-3-06b-local/phase_A/runs, data/qwen-3-06b-local/phase_B/runs, data/qwen-3-06b-local/phase_C/runs]
+      server_runs_dir: data/qwen-3-06b-768/20261025T092821.424493Z-6636be4c/runs
   - label: Qwen3-8B long context
     runs_dir: data/qwen-3-8b-768-big/home/scheglovmi/TAEI/outputs/background-runs/20261027T090746.833536Z-9370a1c5/runs
     run_ids: null
@@ -34,3 +57,10 @@ models: # each model gets its own coefficients, split and transfer checks
       - label: Qwen3-8B R15
         runs_dir: data/qwen3-8b-340/20261025T155137.987440Z-a0ffb7eb/runs
         run_ids: [R15] # the only completed 8B run of that launch
+        caveat: машина была загружена, не проверка модели # GPUs shared, 34 KV blocks
+  - label: Qwen3-0.6B
+    caveat: шумная машина # shared server: per-run machine state varies
+    runs_dir: data/qwen-3-06b-768/20261025T092821.424493Z-6636be4c/runs
+    run_ids: null # all successful runs
+    split_by: [set_id, cache]
+    transfer: []

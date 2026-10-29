@@ -236,6 +236,9 @@ def _synthetic_dataset(model="toy", n_sets=2, scale=1.0) -> nano_data.Dataset:
                         "run_id": run_id,
                         "step_id": "s1",
                         "step_index": 1,
+                        "t_start_ns": 0,
+                        "t_end_ns": int(t_pf * 1e9),
+                        "served": prompt,
                         "new": new,
                         "quad": prompt**2 - cached**2,
                         "T": t_pf,
@@ -251,6 +254,11 @@ def _synthetic_dataset(model="toy", n_sets=2, scale=1.0) -> nano_data.Dataset:
                         "L": prompt,
                         "C": cached,
                         "R": cached / prompt,
+                        "C_cache": cached,
+                        "C_chunk": 0.0,
+                        "R_cache": cached / prompt,
+                        "R_chunk": 0.0,
+                        "served": prompt,
                         "new": new,
                         "quad": prompt**2 - cached**2,
                         "model": model,
@@ -262,6 +270,9 @@ def _synthetic_dataset(model="toy", n_sets=2, scale=1.0) -> nano_data.Dataset:
                             "run_id": run_id,
                             "step_id": [f"d{i}" for i in range(steps_dc)],
                             "step_index": np.arange(steps_dc) + 2,
+                            "t_start_ns": int(t_pf * 1e9)
+                            + np.concatenate([[0], np.cumsum(t_dc)[:-1]]) * 1e9,
+                            "t_end_ns": int(t_pf * 1e9) + np.cumsum(t_dc) * 1e9,
                             "B": 1,
                             "sum_l": sum_l,
                             "T": t_dc,
@@ -308,6 +319,10 @@ def _synthetic_dataset(model="toy", n_sets=2, scale=1.0) -> nano_data.Dataset:
                         "n_decode_steps": steps_dc,
                         "L_mean": prompt,
                         "R_run": cached / prompt,
+                        "R_cache_run": cached / prompt,
+                        "R_chunk_run": 0.0,
+                        "kv_blocks": 100,
+                        "kv_block_size": 256,
                     }
                 )
     return nano_data.Dataset(
@@ -337,7 +352,8 @@ def _document():
 def test_token_prices_add_up_to_predicted_total():
     ev = _evaluation()
     p = prices.run_prices(ev).merge(ev.runs[["source", "run_id", "pred"]])
-    total = (p["a_model"] * p["I"] + p["b_model"] * p["O"]).to_numpy()
+    # ITPS counts new (not cached) input tokens only.
+    total = (p["a_model"] * p["I_new"] + p["b_model"] * p["O"]).to_numpy()
     assert total == pytest.approx(p["pred"].to_numpy())
     budget = (p["pred"] / p["wall_seconds"]).to_numpy()
     assert p["budget_model"].to_numpy() == pytest.approx(budget)
@@ -345,7 +361,8 @@ def test_token_prices_add_up_to_predicted_total():
     assert p["budget_meas"].to_numpy() == pytest.approx(np.ones(len(p)))
     lines = prices.lines(ev)
     by_r = [line["itps_max"] for line in lines["by_R"]]
-    assert by_r == sorted(by_r)  # more reuse -> cheaper input tokens
+    # Per new token, more reuse means more attention to cached KV per token.
+    assert by_r == sorted(by_r, reverse=True)
 
 
 def test_request_ttft_and_tpot_follow_the_trace():
@@ -361,6 +378,86 @@ def test_request_ttft_and_tpot_follow_the_trace():
         ev.prefill_steps.set_index(["source", "run_id"])["T"].reindex(key).to_numpy(),
         rel=1e-6,
     )
+
+
+def test_request_ttft_counts_only_steps_after_the_arrival():
+    ev = _evaluation()
+    data = ev.datasets["train_model"]
+    run = data.runs["run_id"].iloc[0]
+    # The request of this run arrives just after its prefill step started:
+    # that step is not part of its TTFT, so the predicted TTFT is zero.
+    start = ev.prefill_steps.loc[ev.prefill_steps["run_id"] == run, "t_start_ns"]
+    data.requests.loc[data.requests["run_id"] == run, "enqueue_ns"] = (
+        int(start.iloc[0]) + 1
+    )
+    reqs = prices.requests(ev).set_index(["source", "run_id"])
+    assert reqs.loc[("train_model", run), "ttft_hat"] == pytest.approx(0.0)
+    others = reqs.drop(index=("train_model", run))
+    assert (others["ttft_hat"] > 0).all()
+
+
+def test_time_windows_sit_on_the_diagonal_when_the_model_fits():
+    ev = _evaluation()
+    win = prices.windows(ev, seconds=1.0, min_steps=5)
+    assert len(win) and (win["steps"] >= 5).all()
+    # x + y is the predicted busy share of the window: near 1 for a GPU that
+    # never idles and a model within a few percent; the transfer set is 3x
+    # slower than its model, so its windows sit near x + y = 1/3.
+    own = win[win["source"] == "train_model"]
+    assert ((own["x"] + own["y"] - 1).abs() < 0.2).all()
+    other = win[win["source"] != "train_model"]
+    assert (other["x"] + other["y"]).median() == pytest.approx(1 / 3, abs=0.05)
+    assert win["x"].to_numpy() == pytest.approx(
+        (win["a_w"].fillna(0) * win["ITPS"]).to_numpy()
+    )
+    # Steps crossing a border are split, so nothing is lost or counted twice.
+    every = prices.windows(ev, seconds=1.0, min_steps=0)
+    total = ev.prefill_steps["pred"].sum() + ev.decode_steps["pred"].sum()
+    assert (every["pf_hat"] + every["dc_hat"]).sum() == pytest.approx(total)
+    assert every["O_w"].sum() == pytest.approx(ev.decode_steps["B"].sum())
+    summary = prices.window_summary(win)
+    bands = ("share_0_30", "share_30_70", "share_70_100")
+    assert all(sum(r[b] for b in bands) == r["windows"] for r in summary)
+
+
+def test_kv_limit_marks_unreachable_batch_lines():
+    ev = _evaluation()
+    lines = prices.lines(ev)
+    limit = lines["ref"]["B_max"]
+    assert limit == pytest.approx(
+        100 * 256 / (ev.datasets["train_model"].requests["prompt"].median() + 51)
+    )
+    assert all(line["reachable"] == (line["B"] <= limit) for line in lines["by_B"])
+
+
+def test_checks_summary_has_every_check_for_every_data_set():
+    from taei.nano_time import checks
+
+    ev = _evaluation()
+    win = prices.windows(ev, 1.0, 5)
+    reqs = prices.requests(ev)
+    cells = checks.summary_cells(ev, win, reqs, {}, include_train=False)
+    columns = {c["column"] for c in cells}
+    assert columns == {"train_model · test", "big model · transfer"}
+    assert {c["check"] for c in cells} == {
+        "prefill без кэша",
+        "prefill с кэшем",
+        "decode",
+        "T_total",
+        "смеси (окна)",
+        "TTFT",
+        "TPOT",
+    }
+    total = next(
+        c for c in cells if c["check"] == "T_total" and c["column"].startswith("train")
+    )
+    test_runs = ev.runs[
+        (ev.runs["source"] == "train_model") & (ev.runs["part"] == "test")
+    ]
+    assert total["mean_abs"] == pytest.approx(test_runs["rel_err"].abs().mean())
+    pf = checks.prefill_checks(ev)
+    assert pf["cache"] is not None and pf["cache"]["by_source"]
+    assert checks.decode_checks(ev)
 
 
 def test_report_document_is_json_and_generic():
@@ -437,3 +534,17 @@ def test_run_factor_fit_recovers_shape_and_factors():
     assert coef == pytest.approx(scale * np.array([1e-4, 1e-5, 0.02]), rel=1e-3)
     ratio = fitted / pd.Series(factors)
     assert ratio.std() / ratio.mean() < 1e-3
+
+
+def test_closed_loop_in_system_count_and_exact_n_share():
+    from taei.nano_time.local_report import _in_system, _share_at
+
+    # N = 2: q0, q1 at 0; q0 ends at 4 -> q2 at 4; q1 ends at 6 -> q3 at 6;
+    # then nothing new: q2 ends at 8, q3 at 10 (the tail).
+    enq = np.array([0.0, 0.0, 4.0, 6.0])
+    fin = np.array([4.0, 6.0, 8.0, 10.0])
+    t, count = _in_system(enq, fin)
+    # A finish and the submit it triggers at the same time keep the count at N.
+    assert count.max() == 2
+    assert _share_at(t, count, 2, 0.0, 8.0) == 1.0
+    assert _share_at(t, count, 2, 0.0, 10.0) == 0.8

@@ -11,6 +11,7 @@ import contextlib
 import hashlib
 import importlib
 import importlib.util
+import random
 import sys
 import time
 import types
@@ -200,6 +201,44 @@ def _create_device_bound_model_runner(config: Any, rank: int, event: Any) -> Any
         torch.distributed.init_process_group = original_init
 
 
+def create_engine(model_path: str, engine_config: dict[str, Any]) -> Any:
+    """Construct the pinned nano-vLLM engine with rank-bound model runners."""
+    llm_module = importlib.import_module("nanovllm.llm")
+    engine_module = importlib.import_module("nanovllm.engine.llm_engine")
+    original_model_runner = engine_module.ModelRunner
+    # Pinned LLMEngine passes this top-level callable to spawn. Its worker
+    # invocation binds the local rank before ModelRunner's NCCL setup.
+    engine_module.__dict__["ModelRunner"] = _create_device_bound_model_runner
+    try:
+        return llm_module.LLM(model_path, **engine_config)
+    finally:
+        engine_module.__dict__["ModelRunner"] = original_model_runner
+
+
+def warm_engine(engine: Any) -> None:
+    """Untimed full-size prefill and full-batch decode once per process.
+
+    The first large prefill after load is 2-3x slower (allocator growth and
+    kernel selection); without this the first attempt of a process would
+    carry that cost. Each attempt then resets the blocks as before.
+    """
+    sampling = importlib.import_module("nanovllm.sampling_params").SamplingParams
+    scheduler = engine.scheduler
+    rng = random.Random(0)
+    size = min(
+        scheduler.max_num_batched_tokens, scheduler.block_manager.block_size * 64
+    )
+    prompts = [[rng.randrange(1000, 90000) for _ in range(size)]]
+    # A full decode batch of one-block requests, within the KV capacity.
+    batch = min(scheduler.max_num_seqs, len(scheduler.block_manager.blocks) // 2)
+    prompts += [[rng.randrange(1000, 90000) for _ in range(128)] for _ in range(batch)]
+    params = [sampling(temperature=0.6, max_tokens=2, ignore_eos=True)]
+    params += [sampling(temperature=0.6, max_tokens=16, ignore_eos=True)] * (
+        len(prompts) - 1
+    )
+    engine.generate(prompts, params, use_tqdm=False)
+
+
 class NanoVLLMBackend:
     """Run one real nano-vLLM generate call and emit host-observed traces."""
 
@@ -215,6 +254,8 @@ class NanoVLLMBackend:
         seed: int,
         emit: Callable[[str, dict[str, Any]], None],
         measurement_profile: str = "detailed",
+        engine: Any = None,
+        fixed_batch_size: int | None = None,
     ) -> None:
         self.model_path = model_path
         self.engine_config = dict(engine_config)
@@ -223,7 +264,11 @@ class NanoVLLMBackend:
         self.measurement_profile = measurement_profile
         self.seed = seed
         self.emit = emit
-        self.engine: Any = None
+        # A shared engine is loaded once per worker process and reused by several
+        # attempts; close() then only removes this attempt's hooks.
+        self.engine: Any = engine
+        self._shared_engine = engine is not None
+        self.fixed_batch_size = fixed_batch_size
         self._cleanup_registered = False
         self._closed = False
         self._clock_id = str(uuid.uuid4())
@@ -235,6 +280,8 @@ class NanoVLLMBackend:
         self._enqueue_ns: dict[str, int] = {}
         self._first_scheduled_ns: dict[str, int] = {}
         self._finish_ns: dict[str, int] = {}
+        self.closed_loop_summary: dict[str, Any] | None = None
+        self._closed_stop = 0
         self._outputs: list[dict[str, Any]] = []
         self._source_hashes: dict[str, str] = {}
         self._prompt_cache_hits: dict[str, int] = {}
@@ -272,17 +319,9 @@ class NanoVLLMBackend:
         except (ImportError, AttributeError):
             self._original_torch_dtype = None
             self._original_torch_device = None
-        llm_module = importlib.import_module("nanovllm.llm")
-        engine_module = importlib.import_module("nanovllm.engine.llm_engine")
-        original_model_runner = engine_module.ModelRunner
         try:
-            # Pinned LLMEngine passes this top-level callable to spawn. Its worker
-            # invocation binds the local rank before ModelRunner's NCCL setup.
-            engine_module.__dict__["ModelRunner"] = _create_device_bound_model_runner
-            try:
-                self.engine = llm_module.LLM(self.model_path, **engine_config)
-            finally:
-                engine_module.__dict__["ModelRunner"] = original_model_runner
+            if self.engine is None:
+                self.engine = create_engine(self.model_path, engine_config)
             self._warm_and_reset()
             # Reset sampling RNG after warmup, so each measured run starts at seed.
             import torch
@@ -450,8 +489,8 @@ class NanoVLLMBackend:
                 request_id = str(request["request_id"])
                 held: set[int] = set()
                 eligible = (
-                    (len(prompt) + manager.block_size - 1) // manager.block_size - 1
-                )
+                    len(prompt) + manager.block_size - 1
+                ) // manager.block_size - 1
 
                 def hash_donor(
                     seq: Any,
@@ -500,6 +539,9 @@ class NanoVLLMBackend:
 
     def _cleanup_failed_prepare(self) -> None:
         engine = self.engine
+        if self._shared_engine:
+            self._restore()
+            return
         if engine is not None:
             self._restore()
             with contextlib.suppress(AttributeError, ValueError):
@@ -706,11 +748,19 @@ class NanoVLLMBackend:
                     scheduler.waiting = deque(eligible)
                 selected, prefill = original(*args, **kwargs)
                 if self.scheduler_mode == "fixed_batch":
+                    # Upstream puts preempted running sequences at the head of
+                    # waiting; keep them there, ahead of the restored queue.
                     still_waiting = set(scheduler.waiting)
+                    preempted_now = [
+                        seq for seq in scheduler.waiting if seq in before_running
+                    ]
                     scheduler.waiting = deque(
-                        seq
-                        for seq in before_waiting
-                        if seq in still_waiting or seq in held_waiting
+                        preempted_now
+                        + [
+                            seq
+                            for seq in before_waiting
+                            if seq in still_waiting or seq in held_waiting
+                        ]
                     )
                     self._fixed_note_scheduled(selected)
                 scheduled_at = time.monotonic_ns()
@@ -990,6 +1040,19 @@ class NanoVLLMBackend:
                     postprocess_start_monotonic_ns=state.get("modelcall_end_ns"),
                     postprocess_end_monotonic_ns=step_end,
                     gpu_event_duration_ns=None,
+                    # KV state of the step: blocks of the batch (a shared
+                    # prefix block once) and of the whole cache after the step.
+                    context_tokens_sum=sum(
+                        snap["num_tokens"] for snap in snapshots.values()
+                    ),
+                    kv_unique_blocks=len(
+                        {b for snap in snapshots.values() for b in snap["block_ids"]}
+                    ),
+                    kv_used_blocks=len(block_manager.used_block_ids),
+                    kv_capacity_blocks=len(block_manager.blocks),
+                    kv_fill=len(block_manager.used_block_ids)
+                    / len(block_manager.blocks),
+                    preempted_count=len(state.get("preempted", [])),
                 )
                 for sequence_index, seq in enumerate(seqs):
                     request_id = self._request_id_for_seq(seq)
@@ -1088,7 +1151,9 @@ class NanoVLLMBackend:
             self._wave_active = False
         # The full waiting deque remains intact; schedule_wrap temporarily filters
         # it to this wave and restores held entries before returning.
-        members = list(scheduler.waiting)[: scheduler.max_num_seqs]
+        members = list(scheduler.waiting)[
+            : self.fixed_batch_size or scheduler.max_num_seqs
+        ]
         self._wave_id = getattr(self, "_wave_number", 0)
         self._wave_number = self._wave_id + 1
         self._wave_members = {seq.seq_id for seq in members}
@@ -1102,10 +1167,120 @@ class NanoVLLMBackend:
             setattr(obj, name, original)
         self._originals = []
 
+    def _generate_arrivals(self, prompts: list[list[int]], params: list[Any]) -> None:
+        """Add each request at its planned offset and step while work is pending.
+
+        Mirrors the pinned ``LLMEngine.generate`` loop; requests are already
+        sorted by offset. With nothing to run, sleep until the next arrival.
+        """
+        engine = self.engine
+        offsets = [int(r["planned_arrival_offset_ns"]) for r in self._arrival_order]
+        start = time.monotonic_ns()
+        index = 0
+        while index < len(prompts) or not engine.is_finished():
+            now = time.monotonic_ns() - start
+            while index < len(prompts) and offsets[index] <= now:
+                engine.add_request(prompts[index], params[index])
+                index += 1
+            if not engine.is_finished():
+                engine.step()
+            elif index < len(prompts):
+                time.sleep(max(offsets[index] - now, 0) / 1e9)
+
+    def _generate_closed(
+        self,
+        prompts: list[list[int]],
+        params: list[Any],
+        n: int,
+        stop_after: int,
+        warmup: int = 0,
+        min_stop: int | None = None,
+        max_window_s: float | None = None,
+    ) -> int:
+        """Keep exactly ``n`` requests in the system until ``stop_after`` finish.
+
+        The pool holds ``n + stop_after - 1`` requests in submission order: the
+        first ``n`` start at once and each completion before the
+        ``stop_after``-th submits the next one; the remaining tail then drains.
+        With ``max_window_s`` the measurement also stops at the first
+        completion at least ``min_stop`` in and ``max_window_s`` after the
+        ``warmup``-th; the rest of the pool is never submitted. Returns the
+        number of submitted requests.
+        """
+        engine = self.engine
+        index = min(n, len(prompts))
+        for i in range(index):
+            engine.add_request(prompts[i], params[i])
+        done = 0
+        window_start = None
+        self._closed_stop = stop_after
+        while not engine.is_finished():
+            outputs, _ = engine.step()
+            for _ in outputs:
+                done += 1
+                now = time.monotonic_ns()
+                if done == warmup:
+                    window_start = now
+                if (
+                    max_window_s
+                    and window_start is not None
+                    and done < self._closed_stop
+                    and done >= (min_stop or 0)
+                    and now - window_start >= max_window_s * 1e9
+                ):
+                    self._closed_stop = done
+                if done < self._closed_stop and index < len(prompts):
+                    engine.add_request(prompts[index], params[index])
+                    index += 1
+        return index
+
+    def _closed_loop_marks(self, requests: list[dict[str, Any]]) -> dict[str, str]:
+        """Role of each request by completion rank and the measurement window."""
+        loop = requests[0]["closed_loop"]
+        warmup = int(loop["warmup"])
+        measure = self._closed_stop - warmup  # the time limit may stop it early
+        order = sorted(
+            (str(r["request_id"]) for r in requests),
+            key=lambda rid: self._finish_ns.get(rid, 0),
+        )
+        roles = {}
+        for rank, rid in enumerate(order):
+            if rank < warmup:
+                roles[rid] = "warmup"
+            elif rank < warmup + measure:
+                roles[rid] = "measure"
+            else:
+                roles[rid] = "tail"
+        # From the completion of the last warm-up request to that of the last
+        # measured one: the window in which exactly N are in the system.
+        self.closed_loop_summary = {
+            "N": int(loop["N"]),
+            "warmup": warmup,
+            "measure": measure,
+            "window_start_ns": self._finish_ns.get(order[warmup - 1]),
+            "window_end_ns": self._finish_ns.get(order[warmup + measure - 1]),
+            "planned_measure": int(loop["measure"]),
+            "min_measure": loop.get("min_measure"),
+            "max_window_s": loop.get("max_window_s"),
+            "submitted": len(requests),
+        }
+        return roles
+
     def generate(self, requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
         prompts: list[list[int]] = []
         params: list[Any] = []
         sampling = importlib.import_module("nanovllm.sampling_params").SamplingParams
+        closed = requests[0].get("closed_loop") if requests else None
+        if closed:
+            requests = sorted(requests, key=lambda r: int(r["arrival_index"]))
+        arrivals = not closed and any(
+            int(r.get("planned_arrival_offset_ns") or 0) for r in requests
+        )
+        if arrivals:
+            requests = sorted(
+                requests, key=lambda r: int(r["planned_arrival_offset_ns"])
+            )
+            self._arrival_order = requests
         for request in requests:
             request_id = str(request["request_id"])
             self._requests[request_id] = dict(request)
@@ -1123,10 +1298,33 @@ class NanoVLLMBackend:
             )
         self._metric_request_ids = iter(str(r["request_id"]) for r in requests)
         started = time.monotonic_ns()
-        # One upstream generate call receives the entire workload in every mode.
-        upstream_outputs = self.engine.generate(prompts, params, use_tqdm=False)
+        if closed:
+            if self.measurement_profile == "minimal":
+                raise RuntimeError("minimal profile does not support a closed loop")
+            warmup = int(closed["warmup"])
+            stop_after = warmup + int(closed["measure"])
+            min_measure = closed.get("min_measure")
+            submitted = self._generate_closed(
+                prompts,
+                params,
+                int(closed["N"]),
+                stop_after,
+                warmup,
+                None if min_measure is None else warmup + int(min_measure),
+                closed.get("max_window_s"),
+            )
+            requests = requests[:submitted]  # the rest of the pool never ran
+            upstream_outputs = None
+        elif arrivals:
+            self._generate_arrivals(prompts, params)
+            upstream_outputs = None
+        else:
+            # One upstream generate call receives the entire closed workload.
+            upstream_outputs = self.engine.generate(prompts, params, use_tqdm=False)
         ended = time.monotonic_ns()
         if self.measurement_profile == "minimal":
+            if upstream_outputs is None:
+                raise RuntimeError("minimal profile does not support timed arrivals")
             # Pinned generate preserves sequence order in its returned list; this is
             # the real upstream output, not a reconstructed or seeded substitute.
             for request, output in zip(requests, upstream_outputs):
@@ -1134,6 +1332,7 @@ class NanoVLLMBackend:
                 self._request_output_ids[request_id] = [
                     int(token) for token in output["token_ids"]
                 ]
+        roles = self._closed_loop_marks(requests) if closed else {}
         records = []
         for request in requests:
             request_id = str(request["request_id"])
@@ -1170,6 +1369,7 @@ class NanoVLLMBackend:
                     if len(emitted) == int(request["requested_output_tokens"])
                     else "unknown",
                     "status": "success" if emitted else "incomplete",
+                    **({"closed_loop_role": roles[request_id]} if closed else {}),
                     "gpu_generated_timestamp_status": "unsupported",
                     "field_status": {
                         "first_generated_monotonic_ns": {
@@ -1206,6 +1406,8 @@ class NanoVLLMBackend:
         self._closed = True
         engine = self.engine
         self._restore()
+        if self._shared_engine:
+            return
         if engine is not None:
             with contextlib.suppress(AttributeError, ValueError):
                 atexit.unregister(engine.exit)

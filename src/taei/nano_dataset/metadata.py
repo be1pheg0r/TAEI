@@ -254,6 +254,11 @@ def _query_nvml_devices() -> tuple[list[dict[str, Any]] | None, str | None]:
                             "nvmlDeviceGetApplicationsClock",
                             getattr(nvml, "NVML_CLOCK_SM", 0),
                         ),
+                        # Bit mask of active clock limiters (power cap, thermal,
+                        # HW slowdown, idle); 0 means the clock is not held back.
+                        "clocks_event_reasons": call(
+                            "nvmlDeviceGetCurrentClocksEventReasons"
+                        ),
                         "power_limit_w": (
                             call("nvmlDeviceGetPowerManagementLimit") / 1000
                             if isinstance(

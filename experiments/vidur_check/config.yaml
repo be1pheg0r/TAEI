@@ -1,0 +1,20 @@
+# Laws of the time model on Vidur's open operation profiles (CPU only).
+# Data: experiments/vidur_check/fetch.sh -> data/vidur (sparse, pinned commit).
+# Output: runs/<time>/vidur.json, read by nano_time_model as an extra branch.
+defaults:
+  - base
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://taei.conf
+  run:
+    dir: runs/${now:%Y%m%d_%H%M%S}
+
+experiment:
+  name: vidur_check
+  description: Attention cache geometry, linear part, b/a and decode KV slope on Vidur profiles.
+
+vidur_root: data/vidur # git checkout of github.com/microsoft/vidur (data/profiling only)
+specs: experiments/vidur_check/specs.yaml
+ours_run: runs/20261028_164053/time_model.json # our coefficients, read only
