@@ -383,21 +383,24 @@ def build(ev: Evaluation, plan: dict[str, dict], cfg: dict, econ: dict) -> dict:
         "special": _special(workloads, list(steps)),
         "economics": _economics(workloads, fit.choice, econ),
     }
-    _slim(workloads)  # after the tables above, which use every field
+    from . import presentation  # imports curve_grid from this module
+
+    out["presentation"] = presentation.build(out)
+    _slim(workloads, fit.choice)  # after the tables above, which use every field
     return out
 
 
-def _slim(workloads: list[dict]) -> None:
-    """Keep in the curves and point predictions only what the charts read."""
+def _slim(workloads: list[dict], choice: str) -> None:
+    """Keep only what the charts read: curves of every variant (dotted lines),
+    point predictions and errors of the chosen one (tables)."""
     for w in workloads:
         w["curve"] = {
             v: [{k: _round(r[k]) for k in SHIP_KEYS} for r in rows]
             for v, rows in w["curve"].items()
         }
         for p in w["points"]:
-            p["pred"] = {
-                v: {k: _round(r[k]) for k in SHIP_KEYS} for v, r in p["pred"].items()
-            }
+            p["pred"] = {choice: {k: _round(p["pred"][choice][k]) for k in SHIP_KEYS}}
+            p["e"] = {choice: p["e"][choice]}
 
 
 def _round(x):

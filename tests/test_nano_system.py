@@ -203,3 +203,28 @@ def test_closed_loop_counts_completions_inside_the_window(tmp_path):
     assert row["rps"] == pytest.approx(1.0)
     assert row["otps"] == pytest.approx(3.0)
     assert row["ttft_p50"] == pytest.approx(0.65)
+
+
+def test_presentation_cell_revenue_is_check_times_requests():
+    from taei.nano_time import presentation
+
+    variant = {"d0": 0.01, "d1": 2e-7, "d2": 3e-5, "F": 0.0, "kappa": 1.0}
+    system = {
+        "core": {"a": 2e-5, "b": 4e-9, "c": 0.01},
+        "variants": {"floor": {"coef": variant}},
+        "choice": "floor",
+        "engine": {"kv_blocks": 186, "block_size": 256},
+        "economics": {"prices": {"input": 0.1, "cached_input": 0.05, "output": 0.4}},
+    }
+    slo = {"ttft_p90": 5.0, "tpot": 1.0}
+    short = presentation.cell(system, 1024, 32, slo, draws=50)
+    long = presentation.cell(system, 1024, 512, slo, draws=50)
+    assert long["otps"] > short["otps"]
+    pool = presentation.pool(1024, 32, 256)
+    v = economics.check(
+        system["economics"]["prices"],
+        float(pool.new.mean()),
+        float(pool.C.mean()),
+        float(pool.out.mean()),
+    )
+    assert short["rev"] == pytest.approx(v * 3600 * short["rps"])
