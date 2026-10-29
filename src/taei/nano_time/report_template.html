@@ -1223,34 +1223,29 @@ function renderWorkload(parent, w, kind) {
 }
 
 // Economics of one GPU, step by step (the system block of the local model).
-const ECON_NAME = { S5: "Чат", W4: "Чат с системным промптом", W1: "Шаблон", W2: "Генерация", W3: "Документы" };
-const ECON_ORDER = ["S5", "W4", "W1", "W2", "W3"];
+const ECON_NAME = { S5: "S5", W1: "W1", W2: "W2", W3: "W3", W4: "W4" };
+const LOAD_DESC = {
+  S5: "смесь: промпт 513–4096 токенов, ответ 16–256, у четырёх групп общий префикс 2–8 блоков по 256",
+  W1: "все запросы одинаковые: промпт 2048, ответ 128, общий префикс 1024",
+  W2: "короткий промпт 256–1024, длинный ответ 256–1024, общий префикс — половина промпта",
+  W3: "длинный промпт 4096–12288, короткий ответ 16–64, общий префикс — половина промпта",
+  W4: "длины как в S5, общий префикс — 80% промпта",
+};
+const ECON_ORDER = ["S5", "W1", "W2", "W3", "W4"];
 const ECON_COLOR = { S5: "--c1", W4: "--c2", W1: "--c3", W2: "--c4", W3: "--c5" };
 const econRu = (v, d = 0) => (v == null ? "—" : v.toLocaleString("ru-RU", { maximumFractionDigits: d, minimumFractionDigits: d }));
 
 function econSteps(parent) {
   const E = D.local.system.economics;
-  parent.append(el("h3", {}, "Экономика: шаги расчёта"));
+  parent.append(el("h3", {}, "Расчёт выручки по шагам"));
   const forms = el("div", { class: "formulas" });
-  const step = (title, latex, legend) => forms.append(el("div", { class: "formula-block" }, el("h3", {}, title), ...latex.map((eq) => el("div", { class: "math" }, `\\[${eq}\\]`)), el("p", { class: "lede" }, legend)));
-  step("0. Цены для 0.6B", ["p_{\\mathrm{in}} = p_{\\mathrm{in}}^{\\mathrm{8B}} \\cdot \\frac{0.6}{8}, \\qquad p_{\\mathrm{c}} = p_{\\mathrm{c}}^{\\mathrm{8B}} \\cdot \\frac{0.6}{8}, \\qquad p_{\\mathrm{out}} = p_{\\mathrm{out}}^{\\mathrm{8B}} \\cdot \\frac{0.6}{8}"],
-    "p_in, p_c, p_out — цены 0.6B за 1 млн токенов: вход, вход из кэша, выход; p⁸ᴮ — открытые цены Qwen3-8B (на 0.6B их нет), пересчёт по числу параметров.");
-  step("1. Чек запроса", ["v = \\frac{p_{\\mathrm{in}}\\, L(1 - R) + p_{\\mathrm{c}}\\, L R + p_{\\mathrm{out}}\\, O}{10^6}"],
-    "v — сколько стоит один запрос, $; L — длина промпта, R — доля промпта из кэша, O — длина ответа, токенов.");
-  step("2. Время GPU на запрос", [
-    "\\tau = \\tilde a\\, L(1 - R) + \\tilde b\\, O, \\qquad \\tilde a = \\frac{\\sum T_{\\mathrm{pf}}}{\\sum L(1 - R)}, \\qquad T_{\\mathrm{pf}} = a\\, L(1 - R) + b\\, L^2 (1 - R^2) + c",
-    "\\tilde b = \\frac{T_{\\mathrm{dc}}}{B}, \\qquad T_{\\mathrm{dc}} = \\max\\bigl(F,\\ d_0 + d_1 \\bigl(U + \\kappa (\\textstyle\\sum\\ell - U)\\bigr) + d_2 B\\bigr), \\qquad B = \\min(N, B_{\\mathrm{KV}})",
-    "N = \\max \\{ N : \\mathrm{TTFT}_{p90}(N) \\le \\mathrm{TTFT}^{\\mathrm{SLO}},\\ \\mathrm{TPOT}(N) \\le \\mathrm{TPOT}^{\\mathrm{SLO}} \\}",
-  ], "τ — секунд GPU на один запрос; ã и b̃ — секунд GPU на входной и на выходной токен; T_pf и T_dc — время prefill- и decode-шага по модели шага (a, b, c, d0, d1, d2, F, κ — её коэффициенты); Σℓ и U — все и уникальные токены KV в шаге; B — запросов в шаге, B_KV — предел памяти; N — наибольшее число пользователей, при котором ожидание и скорость укладываются в SLO. В расчёте τ = 1/RPS модели «от N»: первый токен даёт prefill, поэтому decode-часть идёт по O − 1 токену.");
-  step("3. Запросов в час", ["Q = \\frac{3600\\, u}{\\tau}"], "Q — запросов в час; u — доля времени, когда на GPU есть нагрузка; 3600 — секунд в часе.");
-  step("4. Выручка в час", [
-    "\\mathrm{Rev} = v\\, Q = \\frac{3600\\, u\\, \\bigl(p_{\\mathrm{in}}\\, \\mathrm{ITPS} + p_{\\mathrm{c}}\\, \\mathrm{ITPS}_{\\text{кэш}} + p_{\\mathrm{out}}\\, \\mathrm{OTPS}\\bigr)}{10^6}",
-    "\\mathrm{ITPS} = \\frac{L(1 - R)}{\\tau}, \\qquad \\mathrm{ITPS}_{\\text{кэш}} = \\frac{L R}{\\tau}, \\qquad \\mathrm{OTPS} = \\frac{O}{\\tau}, \\qquad \\tilde a\\, \\mathrm{ITPS} + \\tilde b\\, \\mathrm{OTPS} = 1",
-  ], "Rev — выручка, $ в час; ITPS — новых входных, ITPS_кэш — входных из кэша, OTPS — выходных токенов в секунду; последнее равенство — та же прямая бюджета, что на графике ITPS–OTPS.");
-  step("5. Прибыль в час", ["\\Pi_{\\text{аренда}} = \\mathrm{Rev} - C_{\\mathrm{rent}}, \\qquad \\Pi_{\\text{своя}} = \\mathrm{Rev} - C_{\\mathrm{el}}, \\qquad C_{\\mathrm{el}} = W \\cdot t_{\\mathrm{el}}"],
-    "Π — прибыль, $ в час; C_rent — аренда такой GPU в час; C_el — электроэнергия своей карты в час; W — мощность GPU, кВт; t_el — тариф, $ за кВт·ч.");
-  step("6. Окупаемость своей карты, дней", ["T_{\\mathrm{pay}} = \\frac{P_{\\mathrm{gpu}}}{24\\, (\\mathrm{Rev} - C_{\\mathrm{el}})}, \\qquad T_{\\mathrm{pay}}(u) = \\frac{P_{\\mathrm{gpu}}}{24\\, (u \\cdot \\mathrm{Rev}_{u=1} - C_{\\mathrm{el}})}"],
-    "T_pay — через сколько дней круглосуточной работы карта окупится; P_gpu — цена карты; 24 — часов в сутках; Rev_{u=1} — выручка при полной загрузке.");
+  const step = (title, latex, legend) => forms.append(el("div", { class: "formula-block" }, el("h3", {}, title), el("div", { class: "math" }, `\\[${latex}\\]`), el("p", { class: "lede" }, legend)));
+  step("1. Цены токенов", "p = p^{\\mathrm{8B}} \\cdot \\frac{0.6}{8}", "p — цена 0.6B за 1 млн токенов (отдельно p_in для входа, p_c для входа из кэша, p_out для выхода); p⁸ᴮ — открытая цена Qwen3-8B, у 0.6B своей нет.");
+  step("2. Чек одного запроса", "v = \\frac{p_{\\mathrm{in}} \\cdot L(1 - R) + p_{\\mathrm{c}} \\cdot L R + p_{\\mathrm{out}} \\cdot O}{10^6}", "v — сколько стоит один запрос, $; L, R, O — как в шаге 1 и 2: длина промпта, доля из кэша, длина ответа.");
+  step("3. Запросов в час", "Q = \\frac{3600 \\cdot u}{\\tau}", "τ — время GPU на запрос из шага 2 при наибольшем N, у которого выполняется требование к качеству; u — доля часа, когда есть нагрузка.");
+  step("4. Выручка в час", "\\mathrm{Rev} = v \\cdot Q", "Rev — $ в час.");
+  step("5. Прибыль в час", "\\Pi_{\\text{аренда}} = \\mathrm{Rev} - C_{\\mathrm{rent}}, \\qquad \\Pi_{\\text{своя}} = \\mathrm{Rev} - W \\cdot t_{\\mathrm{el}}", "C_rent — аренда такой карты в час; W — мощность карты, кВт; t_el — тариф, $ за кВт·ч.");
+  step("6. Окупаемость своей карты", "T_{\\mathrm{pay}} = \\frac{P_{\\mathrm{gpu}}}{24 \\cdot (u \\cdot \\mathrm{Rev}_{u=1} - W \\cdot t_{\\mathrm{el}})}", "T_pay — дней круглосуточной работы до окупаемости; P_gpu — цена карты; Rev_{u=1} — выручка при полной загрузке.");
   parent.append(forms);
   const g = E.gpu, b = E.base;
   parent.append(el("h3", {}, "Параметры и источники"));
@@ -1709,8 +1704,8 @@ function renderModel() {
 }
 
 // "Коротко": the capacity of one GPU from the model "from N" (the system block of the local model).
-const BRIEF_NAME = { S5: "Чат", W4: "Чат с системным промптом", W1: "Шаблон", W2: "Генерация", W3: "Документы" };
-const BRIEF_ORDER = ["S5", "W4", "W1", "W2", "W3"];
+const BRIEF_NAME = ECON_NAME;
+const BRIEF_ORDER = ECON_ORDER;
 const BRIEF_COLOR = { S5: "--c1", W4: "--c2", W1: "--c3", W2: "--c4", W3: "--c5" };
 const BRIEF_SYMBOL = { S5: "circle", W4: "diamond", W1: "square", W2: "triangle-up", W3: "cross" };
 let briefState = { cache: "on", slo: 1 };
@@ -1742,56 +1737,56 @@ function renderBrief() {
   const w = S.workloads.find((x) => x.load === briefState.load && x.cache === briefState.cache && x.scheduler === "upstream_dynamic")
     || S.workloads.find((x) => x.load === briefState.load && x.scheduler === "upstream_dynamic");
   const cv = w.curve[ch], pts = [...w.points].sort((a, b) => a.N - b.N);
-  const name = `${BRIEF_NAME[w.load]}, ${w.cache === "on" ? "с кэшем" : "без кэша"}`;
+  const name = `${w.load}, ${w.cache === "on" ? "с кэшем префиксов" : "без кэша"}`;
   const lay = (x, y, extra = {}) => baseLayout("", x, y, { margin: { l: 72, r: 24, t: 16, b: 56 }, ...extra });
-  const pointLabels = (rows, xf, yf, c) => ({ type: "scatter", mode: "text", x: rows.map(xf), y: rows.map(yf), text: rows.map((r) => `N ${r.N}`), textposition: "top right",
+  const nLabels = (rows, xf, yf, c) => ({ type: "scatter", mode: "text", x: rows.map(xf), y: rows.map(yf), text: rows.map((r) => `N ${r.N}`), textposition: "top right",
     textfont: { size: 10, color: c }, hoverinfo: "skip", showlegend: false });
+  const formula = (parent, latex, legend) => parent.append(el("div", { class: "formula-block" }, el("div", { class: "math" }, `\\[${latex}\\]`), el("p", { class: "lede" }, legend)));
 
-  // 1. The step model.
+  // 1. Step model.
   let s = section("Шаг 1. Модель времени шага GPU",
-    "Всё начинается с модели одного шага движка: сколько длится prefill (промпт) и decode (один токен ответа всем запросам батча). Она подобрана на сетках S1 и S2 и та же, что во вкладке Qwen3-0.6B local.");
-  const forms = el("div", { class: "formulas" });
-  const block = (title, latex, legend) => forms.append(el("div", { class: "formula-block" }, el("h3", {}, title), ...latex.map((eq) => el("div", { class: "math" }, `\\[${eq}\\]`)), legend ? el("p", { class: "lede" }, legend) : null));
-  block("Prefill", ["T_{\\mathrm{pf}} = a \\sum L(1 - R) + b \\sum L^2 (1 - R^2) + c"],
-    "L — длина промпта, R — доля промпта из кэша, L(1 − R) — новые токены; a — цена нового токена, b — квадратичная часть внимания, c — накладные шага.");
-  block("Decode", [V.latex],
-    "B — запросов в шаге, Σℓ — все токены их контекстов, U — те же без повторов общего префикса, κ — цена повторённого токена, F — минимальное время шага; d0 — накладные шага, d1 — цена токена контекста, d2 — цена запроса.");
-  s.append(forms);
-  s.append(el("p", {}, `Коэффициенты: prefill ${coefText({ a: S.core.a, b: S.core.b, c: S.core.c })}; decode ${coefText({ d0: V.coef.d0, d1: V.coef.d1, d2: V.coef.d2, F: V.coef.F, "\\kappa": V.coef.kappa })}.`));
+    "Движок работает шагами. Prefill-шаг считает промпты новых запросов, decode-шаг выдаёт по одному токену ответа всем запросам в работе. Модель предсказывает длительность шага; она подобрана на замерах S1 (prefill) и S2 (decode).");
+  let f = el("div", { class: "formulas" });
+  formula(f, "T_{\\mathrm{pf}} = a \\cdot L(1 - R) + b \\cdot L^2 (1 - R^2) + c", "Prefill одного запроса. L — длина промпта, токенов; R — доля промпта, взятая из кэша; a, b, c — коэффициенты.");
+  formula(f, "T_{\\mathrm{dc}} = d_0 + d_1 \\cdot \\textstyle\\sum\\ell + d_2 \\cdot B", "Decode-шаг. B — запросов в шаге; Σℓ — сумма длин их контекстов; d0, d1, d2 — коэффициенты. В расчётах ещё два уточнения: шаг не короче F, а повторы общего префикса в Σℓ считаются с весом κ.");
+  s.append(f);
+  s.append(el("p", {}, `Коэффициенты: ${coefText({ a: S.core.a, b: S.core.b, c: S.core.c })}; ${coefText({ d0: V.coef.d0, d1: V.coef.d1, d2: V.coef.d2, F: V.coef.F, "\\kappa": V.coef.kappa })}.`));
   const P = Lc.prefill_grid.points, Q = Lc.decode_grid.points;
   let row = chartRow(s);
-  const ptHover = (r) => `L ${int(r.L)}, R ${num(r.R, 3)}<br>замер ${num(r.T, 4)} с, модель ${num(r.T_hat, 4)} с`;
   chart(row, () => {
     const single = P.filter((r) => r.k === 1 && !r.mixed && !(r.cache === "on" && r.R === 0));
-    return [measuredAndModel(groupBy(single, "R_target"), "L", "T", "T_hat", (k) => `R ≈ ${k}`, ptHover),
-      baseLayout("Prefill одного запроса", "L, токенов в промпте", "время шага, с", { xaxis: logAxis("L, токенов в промпте"), yaxis: { ...baseLayout().yaxis, type: "log", title: { text: "время шага, с" } } })];
+    return [measuredAndModel(groupBy(single, "R_target"), "L", "T", "T_hat", (k) => `R ≈ ${k}`, (r) => `L ${int(r.L)}, R ${num(r.R, 3)}<br>замер ${num(r.T, 4)} с, модель ${num(r.T_hat, 4)} с`),
+      baseLayout("Prefill одного запроса (S1)", "L, токенов в промпте", "время шага, с", { xaxis: logAxis("L, токенов в промпте"), yaxis: { ...baseLayout().yaxis, type: "log", title: { text: "время шага, с" } } })];
   }, true);
   chart(row, () => [measuredAndModel(groupBy(Q, "L"), "B", "T", "T_hat", (k) => `ℓ ${int(k)}`, (r) => `ℓ ${int(r.L)}, B ${r.B}<br>замер ${num(r.T * 1e3, 4)} мс, модель ${num(r.T_hat * 1e3, 4)} мс`),
-    baseLayout("Decode-шаг от числа запросов B", "B, запросов в шаге", "время шага, с", { xaxis: logAxis("B, запросов в шаге", true) })], true);
-  briefRead(s, "Точки — замер (медиана по повторам), пунктир — модель. Слева: время prefill растёт с длиной промпта и падает с долей кэша R. Справа: decode-шаг почти не дорожает при росте B, пока контекст мал.",
-    `Модель шага ошибается в среднем на ${pct0(Lc.prefill_grid.mean_abs_e)} по prefill и ${pct0(Lc.decode_grid.mean_abs_e)} по decode. Decode-шаг при B = 32 почти не длиннее, чем при B = 1, поэтому чем больше запросов идут вместе, тем дешевле каждый токен ответа — до предела памяти.`);
+    baseLayout("Decode-шаг от B (S2)", "B, запросов в шаге", "время шага, с", { xaxis: logAxis("B, запросов в шаге", true) })], true);
+  briefRead(s, "Точки — замер, пунктир — модель. Слева: время prefill от длины промпта при разной доле кэша R. Справа: время decode-шага от числа запросов B при разной длине контекста ℓ.",
+    `Ошибка модели шага: prefill ${pct0(Lc.prefill_grid.mean_abs_e)}, decode ${pct0(Lc.decode_grid.mean_abs_e)}. Decode-шаг при B = 32 лишь немного длиннее, чем при B = 1: чем больше запросов в шаге, тем меньше времени на один токен.`);
 
-  // 2. From the step to the system.
-  s = section("Шаг 2. От шага к системе: что даёт GPU при N пользователях",
-    "Модель «от N» складывает шаги в работу системы. Вход — только пул запросов (длины L, O, префиксы) и N; трасса не нужна.");
-  const f2 = el("div", { class: "formulas" });
-  const b2 = (latex, legend) => f2.append(el("div", { class: "formula-block" }, ...latex.map((eq) => el("div", { class: "math" }, `\\[${eq}\\]`)), el("p", { class: "lede" }, legend)));
-  b2(["B = \\min(N,\\ B_{\\mathrm{KV}})"], "B — сколько запросов реально в работе; N — пользователей одновременно; B_KV — сколько влезает в память KV (предел памяти, «колено»). Остальные N − B ждут в очереди.");
-  b2(["\\tau = \\bar T_{\\mathrm{pf}} + (\\bar O - 1)\\, \\frac{T_{\\mathrm{dc}}(B)}{B}, \\qquad \\mathrm{RPS} = \\frac{1}{\\tau}"], "τ — время GPU на один запрос: свой prefill плюс доля decode-шагов (каждый шаг обслуживает B запросов); RPS — запросов в секунду.");
-  b2(["\\mathrm{ITPS} = \\mathrm{RPS}\\cdot \\overline{L(1-R)}, \\qquad \\mathrm{OTPS} = \\mathrm{RPS}\\cdot \\bar O, \\qquad \\mathrm{TPOT} = \\frac{B}{\\mathrm{RPS}\\,(\\bar O - 1)}, \\qquad \\mathrm{TTFT} = T_{\\mathrm{pf}} + \\frac{\\max(0,\\ N - B)}{\\mathrm{RPS}}"],
-    "ITPS и OTPS — входных (новых) и выходных токенов в секунду на всю GPU; TPOT — время между токенами ответа у одного пользователя (TTPS = 1/TPOT); TTFT — ожидание первого токена.");
-  s.append(f2);
-
-  // Workload selector.
+  // 2. Technical metrics.
+  s = section("Шаг 2. Технические метрики от числа пользователей N",
+    "N — сколько запросов одновременно в системе: как только один получил ответ, приходит следующий. По модели шага и составу запросов считаем, что получается при каждом N.");
+  f = el("div", { class: "formulas" });
+  formula(f, "B = \\min(N,\\ B_{\\mathrm{KV}})", "Сколько запросов реально в работе. B_KV — сколько их помещается в память KV-кэша; остальные N − B ждут в очереди.");
+  formula(f, "\\tau = T_{\\mathrm{pf}} + (O - 1) \\cdot \\frac{T_{\\mathrm{dc}}}{B}, \\qquad \\mathrm{RPS} = \\frac{1}{\\tau}", "τ — время GPU на один запрос: его prefill плюс его доля decode-шагов (O — длина ответа, один шаг обслуживает B запросов). RPS — запросов в секунду.");
+  s.append(f);
+  table(s, [
+    ["ITPS", "входных токенов в секунду (новых, без кэша) на всю GPU", "RPS · L(1 − R)"],
+    ["OTPS", "выходных токенов в секунду на всю GPU", "RPS · O"],
+    ["TTPS", "токенов в секунду одному пользователю", "1 / TPOT, TPOT = B / (RPS · (O − 1))"],
+    ["TTFT", "ожидание первого токена", "свой prefill + очередь (N − B) / RPS"],
+  ].map(([m, what, how]) => ({ m, what, how })), [
+    { label: "метрика", key: "m" }, { label: "что это", key: "what", text: true }, { label: "как считается", key: "how", text: true },
+  ]);
+  s.append(el("h3", {}, "Нагрузки, на которых проверено"));
+  table(s, BRIEF_ORDER.map((l) => ({ l, d: LOAD_DESC[l] })), [{ label: "нагрузка", key: "l" }, { label: "запросы", key: "d", text: true }]);
   const ctl = el("div", { style: "display:grid;gap:8px" });
   s.append(ctl);
-  briefSeg(ctl, BRIEF_ORDER.map((l) => [l, BRIEF_NAME[l]]), briefState.load, (v) => { briefState.load = v; }, "нагрузка");
+  briefSeg(ctl, BRIEF_ORDER.map((l) => [l, l]), briefState.load, (v) => { briefState.load = v; }, "нагрузка");
   briefSeg(ctl, [["on", "с кэшем префиксов"], ["off", "без кэша"]], briefState.cache, (v) => { briefState.cache = v; }, "кэш");
-  s.append(el("p", {}, el("strong", {}, name), `: в среднем промпт ${int(w.pool.L_mean)} токенов (из кэша ${pct0(w.pool.R)}), ответ ${int(w.pool.O_mean)}. Предел памяти — N ≈ ${Math.round(w.knee_pred)} (замер ${w.knee_fact == null ? "—" : num(w.knee_fact, 3)}).`));
+  s.append(el("p", {}, el("strong", {}, name), `. Предел памяти: B_KV ≈ ${Math.round(w.knee_pred)} запросов (по замеру ${w.knee_fact == null ? "—" : num(w.knee_fact, 3)}).`));
 
-  // 3. Mentor charts.
-  s = section("Шаг 3. Графики: что GPU может отдать и что получает пользователь");
-  s.append(el("h3", {}, "ITPS–OTPS: бюджет GPU при разном N"));
+  s.append(el("h3", {}, "ITPS и OTPS при разном N"));
   const kneeN = cv.filter((r) => r.N <= w.knee_pred).slice(-1)[0];
   const showN = [...new Set([1, 4, 16, kneeN.N, cv[cv.length - 1].N])].filter((n) => cv.some((r) => r.N === n)).sort((a, b) => a - b);
   row = chartRow(s);
@@ -1799,61 +1794,62 @@ function renderBrief() {
     const t = [];
     let xmax = 0, ymax = 0;
     showN.forEach((n, i) => {
-      const r = cv.find((x) => x.N === n), c = seqColor(i, showN.length);
-      const xi = 1 / r.a_tilde, yo = 1 / r.b_tilde;
+      const r = cv.find((x) => x.N === n), c = seqColor(i, showN.length), xi = 1 / r.a_tilde, yo = 1 / r.b_tilde;
       t.push({ type: "scatter", mode: "lines+text", name: `N = ${n}${n === kneeN.N ? " (предел памяти)" : ""}`, x: [xi, 0], y: [0, yo], text: ["", `N ${n}`], textposition: "middle right",
-        textfont: { size: 11, color: c }, line: { color: c, width: 2 }, hovertemplate: `N ${n}: только вход — %{x:,.0f} ток/с, только выход — %{y:,.0f} ток/с<extra></extra>` });
-      t.push({ type: "scatter", mode: "markers", showlegend: false, x: [r.itps_new], y: [r.otps], marker: { color: c, size: 14, symbol: "x-thin-open", line: { width: 3, color: c } },
-        hovertemplate: `N ${n} · модель<br>вход %{x:,.0f}, выход %{y:,.0f} ток/с<extra></extra>` });
+        textfont: { size: 11, color: c }, line: { color: c, width: 2 }, hovertemplate: `N ${n}: только вход — %{x:,.0f}, только выход — %{y:,.0f} ток/с<extra></extra>` });
+      t.push({ type: "scatter", mode: "markers", showlegend: false, x: [r.itps_new], y: [r.otps], marker: { color: c, size: 14, symbol: "x-thin-open", line: { width: 3, color: c } }, hovertemplate: `N ${n} · модель: ITPS %{x:,.0f}, OTPS %{y:,.0f}<extra></extra>` });
       const m = pts.find((p) => p.N === n);
-      if (m) t.push({ type: "scatter", mode: "markers", showlegend: false, x: [m.itps_new], y: [m.otps], marker: { color: c, size: 9, line: { width: 1, color: css("--bg") } },
-        hovertemplate: `N ${n} · замер<br>вход %{x:,.0f}, выход %{y:,.0f} ток/с<extra></extra>` });
+      if (m) t.push({ type: "scatter", mode: "markers", showlegend: false, x: [m.itps_new], y: [m.otps], marker: { color: c, size: 9, line: { width: 1, color: css("--bg") } }, hovertemplate: `N ${n} · замер: ITPS %{x:,.0f}, OTPS %{y:,.0f}<extra></extra>` });
       xmax = Math.max(xmax, xi); ymax = Math.max(ymax, yo);
     });
     const ray = cv[cv.length - 1];
-    t.push({ type: "scatter", mode: "lines", name: "луч смеси нагрузки (Ō / Ī)", x: [0, ray.itps_new * 1.15], y: [0, ray.otps * 1.15], line: { color: css("--muted"), width: 1.5, dash: "dash" }, hoverinfo: "skip" });
+    t.push({ type: "scatter", mode: "lines", name: `соотношение выхода и входа у ${w.load}`, x: [0, ray.itps_new * 1.15], y: [0, ray.otps * 1.15], line: { color: css("--muted"), width: 1.5, dash: "dash" }, hoverinfo: "skip" });
     t.push({ type: "scatter", mode: "markers", name: "крест — модель, точка — замер", x: [null], y: [null], marker: { color: css("--muted"), size: 12, symbol: "x-thin-open", line: { width: 3, color: css("--muted") } } });
-    return [t, lay("ITPS — новых входных токенов в секунду", "OTPS — выходных токенов в секунду", {
-      xaxis: { ...baseLayout().xaxis, range: [0, xmax * 1.05], title: { text: "ITPS — новых входных токенов в секунду" } }, yaxis: { ...baseLayout().yaxis, range: [0, ymax * 1.1], title: { text: "OTPS — выходных токенов в секунду" } } })];
+    return [t, lay("ITPS, входных токенов в секунду", "OTPS, выходных токенов в секунду", {
+      xaxis: { ...baseLayout().xaxis, range: [0, xmax * 1.05], title: { text: "ITPS, входных токенов в секунду" } }, yaxis: { ...baseLayout().yaxis, range: [0, ymax * 1.1], title: { text: "OTPS, выходных токенов в секунду" } } })];
   }, true);
   const r1 = cv[0];
-  briefRead(s, "Прямая — бюджет GPU при данном N: ã·ITPS + b̃·OTPS = 1. Она соединяет две крайности: GPU занят только промптами (точка на оси x) или только ответами (точка на оси y). Между ними — компромисс: больше входа значит меньше выхода. Пунктирный луч — пропорция этой нагрузки (сколько выхода на единицу входа). Пересечение луча с прямой — где окажется нагрузка: крест — модель, точка — замер.",
-    `С ростом N прямая отодвигается от нуля: при N = 1 GPU мог бы отдать только ${int(1 / r1.b_tilde)} выходных ток/с, при N = ${kneeN.N} — ${int(1 / kneeN.b_tilde)}. Это эффект батча: decode-шаг почти не дорожает, а обслуживает больше запросов. После предела памяти прямая больше не двигается — добавлять пользователей бесполезно.`);
+  briefRead(s, `Линия при данном N — все сочетания ITPS и OTPS, которые GPU успевает за секунду: точка на оси x — если бы запросы были только промптами, на оси y — только ответами. Чем больше одного, тем меньше другого. Пунктир — соотношение выхода и входа у ${w.load}; на пересечении с линией — ITPS и OTPS этой нагрузки (крест — модель, точка — замер).`,
+    `С ростом N линия отходит от нуля: при N = 1 выход — не больше ${int(1 / r1.b_tilde)} ток/с, при N = ${kneeN.N} — ${int(1 / kneeN.b_tilde)}. После предела памяти линия не двигается.`);
 
-  s.append(el("h3", {}, "Пропускная способность GPU от скорости для пользователя"));
+  s.append(el("h3", {}, "Токены в секунду всей GPU и одному пользователю"));
   row = chartRow(s);
   chart(row, () => {
-    const c1 = css("--c1"), c2 = css("--c2");
-    const tot = (r) => r.itps_full + r.otps;
+    const c1 = css("--c1"), c2 = css("--c2"), tot = (r) => r.itps_full + r.otps;
     return [[
-      { type: "scatter", mode: "lines", name: "OTPS — модель", x: cv.map((r) => r.ttps), y: cv.map((r) => r.otps), line: { color: c1, width: 2.5 }, customdata: cv.map((r) => r.N), hovertemplate: "N %{customdata}: %{x:.0f} ток/с пользователю, %{y:,.0f} ток/с GPU<extra></extra>" },
-      { type: "scatter", mode: "markers", name: "OTPS — замер", x: pts.map((p) => 1 / p.tpot), y: pts.map((p) => p.otps), marker: { color: c1, size: 9, line: { width: 1, color: css("--bg") } }, customdata: pts.map((p) => p.N), hovertemplate: "N %{customdata} · замер: %{x:.0f} и %{y:,.0f} ток/с<extra></extra>" },
-      pointLabels(pts, (p) => 1 / p.tpot, (p) => p.otps, c1),
-      { type: "scatter", mode: "lines", name: "все токены (вход + выход) — модель", x: cv.map((r) => r.ttps), y: cv.map(tot), line: { color: c2, width: 2.5 }, customdata: cv.map((r) => r.N), hovertemplate: "N %{customdata}: %{x:.0f} ток/с пользователю, %{y:,.0f} ток/с GPU<extra></extra>" },
-      { type: "scatter", mode: "markers", name: "все токены — замер", x: pts.map((p) => 1 / p.tpot), y: pts.map(tot), marker: { color: c2, size: 9, line: { width: 1, color: css("--bg") } }, customdata: pts.map((p) => p.N), hovertemplate: "N %{customdata} · замер: %{x:.0f} и %{y:,.0f} ток/с<extra></extra>" },
-    ], lay("TTPS — токенов в секунду одному пользователю (1/TPOT)", "токенов в секунду на всю GPU", { yaxis: { ...baseLayout().yaxis, type: "log", title: { text: "токенов в секунду на всю GPU (лог. шкала)" } } })];
+      { type: "scatter", mode: "lines", name: "OTPS — модель", x: cv.map((r) => r.ttps), y: cv.map((r) => r.otps), line: { color: c1, width: 2.5 }, customdata: cv.map((r) => r.N), hovertemplate: "N %{customdata}: TTPS %{x:.0f}, OTPS %{y:,.0f}<extra></extra>" },
+      { type: "scatter", mode: "markers", name: "OTPS — замер", x: pts.map((p) => 1 / p.tpot), y: pts.map((p) => p.otps), marker: { color: c1, size: 9, line: { width: 1, color: css("--bg") } }, customdata: pts.map((p) => p.N), hovertemplate: "N %{customdata} · замер: TTPS %{x:.0f}, OTPS %{y:,.0f}<extra></extra>" },
+      nLabels(pts, (p) => 1 / p.tpot, (p) => p.otps, c1),
+      { type: "scatter", mode: "lines", name: "вход + выход — модель", x: cv.map((r) => r.ttps), y: cv.map(tot), line: { color: c2, width: 2.5 }, customdata: cv.map((r) => r.N), hovertemplate: "N %{customdata}: TTPS %{x:.0f}, всего %{y:,.0f}<extra></extra>" },
+      { type: "scatter", mode: "markers", name: "вход + выход — замер", x: pts.map((p) => 1 / p.tpot), y: pts.map(tot), marker: { color: c2, size: 9, line: { width: 1, color: css("--bg") } }, customdata: pts.map((p) => p.N), hovertemplate: "N %{customdata} · замер: TTPS %{x:.0f}, всего %{y:,.0f}<extra></extra>" },
+    ], lay("TTPS, токенов в секунду одному пользователю", "токенов в секунду всей GPU (лог. шкала)", { yaxis: { ...baseLayout().yaxis, type: "log", title: { text: "токенов в секунду всей GPU (лог. шкала)" } } })];
   }, true);
-  const fast = cv[0], top = kneeN;
-  briefRead(s, "Каждая точка — одно N (подписано у замеров). Правее — быстрее одному пользователю, выше — больше токенов отдаёт вся GPU. Линия — граница компромисса: двигаясь по ней, мы меняем скорость для пользователя на общую отдачу GPU.",
-    `При N = 1 пользователь получает ${int(fast.ttps)} ток/с, а GPU отдаёт ${int(fast.otps)} выходных ток/с. При N = ${top.N} — ${int(top.ttps)} ток/с пользователю и ${int(top.otps)} всей GPU: отдача выросла в ${num(top.otps / fast.otps, 2)} раза ценой замедления в ${num(fast.ttps / top.ttps, 2)} раза.`);
+  briefRead(s, "Каждая точка — одно N (подписано). Правее — быстрее одному пользователю, выше — больше токенов всей GPU.",
+    `При N = 1 пользователь получает ${int(cv[0].ttps)} ток/с, GPU выдаёт ${int(cv[0].otps)} выходных ток/с. При N = ${kneeN.N}: ${int(kneeN.ttps)} ток/с пользователю и ${int(kneeN.otps)} выходных ток/с всей GPU.`);
 
-  s.append(el("h3", {}, "TTPS–TTFT: скорость ответа и ожидание первого токена"));
+  s.append(el("h3", {}, "TTPS и TTFT"));
   row = chartRow(s);
   chart(row, () => {
     const c = css("--c1");
     return [[
-      { type: "scatter", mode: "lines+markers", name: "замер", x: pts.map((p) => p.ttft_p50), y: pts.map((p) => 1 / p.tpot), line: { color: c, width: 2 }, marker: { color: c, size: 9, line: { width: 1, color: css("--bg") } }, customdata: pts.map((p) => p.N), hovertemplate: "N %{customdata} · замер<br>ожидание %{x:.2f} с, поток %{y:.0f} ток/с<extra></extra>" },
-      pointLabels(pts, (p) => p.ttft_p50, (p) => 1 / p.tpot, c),
-      { type: "scatter", mode: "lines", name: "модель", x: cv.map((r) => r.ttft_p50), y: cv.map((r) => r.ttps), line: { color: css("--muted"), width: 1.5, dash: "dot" }, customdata: cv.map((r) => r.N), hovertemplate: "N %{customdata} · модель<br>ожидание %{x:.2f} с, поток %{y:.0f} ток/с<extra></extra>" },
-    ], lay("TTFT — ожидание первого токена, с (медиана; ось развёрнута: правее — меньше ждать)", "TTPS — токенов в секунду пользователю", { xaxis: { ...baseLayout().xaxis, type: "log", autorange: "reversed", title: { text: "TTFT — ожидание первого токена, с (медиана; правее — меньше ждать)" } } })];
+      { type: "scatter", mode: "lines+markers", name: "замер", x: pts.map((p) => p.ttft_p50), y: pts.map((p) => 1 / p.tpot), line: { color: c, width: 2 }, marker: { color: c, size: 9, line: { width: 1, color: css("--bg") } }, customdata: pts.map((p) => p.N), hovertemplate: "N %{customdata} · замер: TTFT %{x:.2f} с, TTPS %{y:.0f}<extra></extra>" },
+      nLabels(pts, (p) => p.ttft_p50, (p) => 1 / p.tpot, c),
+      { type: "scatter", mode: "lines", name: "модель", x: cv.map((r) => r.ttft_p50), y: cv.map((r) => r.ttps), line: { color: css("--muted"), width: 1.5, dash: "dot" }, customdata: cv.map((r) => r.N), hovertemplate: "N %{customdata} · модель: TTFT %{x:.2f} с, TTPS %{y:.0f}<extra></extra>" },
+    ], lay("TTFT, с (медиана; ось развёрнута: правее — меньше ждать)", "TTPS, токенов в секунду одному пользователю", { xaxis: { ...baseLayout().xaxis, type: "log", autorange: "reversed", title: { text: "TTFT, с (медиана; ось развёрнута: правее — меньше ждать)" } } })];
   }, true);
   const lastP = pts[pts.length - 1], kneeP = pts.filter((p) => p.N <= w.knee_pred).slice(-1)[0];
-  briefRead(s, "Лучше — вверх и вправо: ответ идёт быстро и начинается быстро. Точки по N слева направо по ходу линии: N растёт — пользователь получает меньше токенов в секунду и дольше ждёт.",
-    `До предела памяти (N ≤ ${kneeP.N}) ожидание остаётся в пределах ${num(kneeP.ttft_p50, 2)} с, падает только скорость потока. После предела очередь растёт: при N = ${lastP.N} первый токен ждут ${num(lastP.ttft_p50, 2)} с, а скорость потока почти не меняется.`);
+  briefRead(s, "Лучше — вверх и вправо. Точки подписаны N; с ростом N пользователь получает меньше токенов в секунду и дольше ждёт первый.",
+    `До предела памяти (N ≤ ${kneeP.N}) TTFT не больше ${num(kneeP.ttft_p50, 2)} с, падает только TTPS. После предела растёт очередь: при N = ${lastP.N} TTFT ${num(lastP.ttft_p50, 2)} с.`);
+  table(s, Object.entries({ rps: "RPS", otps: "OTPS", ttft_p50: "TTFT, медиана", ttft_p90: "TTFT, 90%", tpot: "TPOT" }).map(([k, n]) => ({ n, below: acc.below[`${k}_abs`], above: acc.above[`${k}_abs`] })), [
+    { label: "ошибка прогноза (все нагрузки)", key: "n", text: true },
+    { label: `до предела памяти (${acc.below.points} точек)`, key: "below", fmt: (v) => `±${pct0(v)}` },
+    { label: `после (${acc.above.points} точек)`, key: "above", fmt: (v) => `±${pct0(v)}` },
+  ]);
 
-  // 4. Revenue.
-  s = section("Шаг 4. Выручка и окупаемость");
-  briefSeg(s, E.slo.map((x, i) => [i, `${x.label}: TTFT p90 ≤ ${x.ttft_p90} с, ≥ ${ru(1 / x.tpot)} ток/с`]), briefState.slo, (v) => { briefState.slo = v; }, "требование к качеству");
+  // 3. Business.
+  s = section("Шаг 3. Переход к деньгам",
+    "Технические метрики шага 2 переводим в выручку. Требование к качеству задаёт, сколько пользователей N можно держать: наибольшее N, при котором TTFT (90%) и TPOT не выше порогов.");
+  briefSeg(s, E.slo.map((x, i) => [i, `${x.label}: TTFT ≤ ${x.ttft_p90} с, TTPS ≥ ${ru(1 / x.tpot)}`]), briefState.slo, (v) => { briefState.slo = v; }, "требование к качеству");
   econSteps(s);
   s.append(el("h3", {}, `Выручка в час от N: ${name}`));
   row = chartRow(s);
@@ -1862,29 +1858,19 @@ function renderBrief() {
   const slo = E.slo[briefState.slo], meets = (r) => r.ttft_p90 <= slo.ttft_p90 && r.tpot <= slo.tpot;
   const okN = cv.filter(meets).slice(-1)[0];
   chart(row, () => {
-    const c = css("--c1"), t = [
+    const c = css("--c1"), last = cv[cv.length - 1].N, t = [
       { type: "scatter", mode: "lines", name: "выручка — модель", x: cv.map((r) => r.N), y: cv.map(money), line: { color: c, width: 2.5 }, hovertemplate: "N %{x}: $%{y:.3f} в час<extra></extra>" },
       { type: "scatter", mode: "markers", name: "выручка — замер", x: pts.map((p) => p.N), y: pts.map(money), marker: { color: c, size: 9, line: { width: 1, color: css("--bg") } }, hovertemplate: "N %{x} · замер: $%{y:.3f} в час<extra></extra>" },
-      { type: "scatter", mode: "lines", name: `аренда GPU, $${E.gpu.rent_per_hour}/ч`, x: [1, cv[cv.length - 1].N], y: [E.gpu.rent_per_hour, E.gpu.rent_per_hour], line: { color: css("--muted"), width: 1.5, dash: "dash" }, hoverinfo: "skip" },
-      { type: "scatter", mode: "lines", name: `электроэнергия своей карты, $${num(E.electricity_per_hour, 2)}/ч`, x: [1, cv[cv.length - 1].N], y: [E.electricity_per_hour, E.electricity_per_hour], line: { color: css("--muted"), width: 1.5, dash: "dot" }, hoverinfo: "skip" },
+      { type: "scatter", mode: "lines", name: `аренда GPU, $${E.gpu.rent_per_hour}/ч`, x: [1, last], y: [E.gpu.rent_per_hour, E.gpu.rent_per_hour], line: { color: css("--muted"), width: 1.5, dash: "dash" }, hoverinfo: "skip" },
+      { type: "scatter", mode: "lines", name: `электроэнергия своей карты, $${num(E.electricity_per_hour, 2)}/ч`, x: [1, last], y: [E.electricity_per_hour, E.electricity_per_hour], line: { color: css("--muted"), width: 1.5, dash: "dot" }, hoverinfo: "skip" },
     ];
-    if (okN) t.push({ type: "scatter", mode: "markers+text", name: `предел по требованию «${slo.label}»`, x: [okN.N], y: [money(okN)], text: [`N ${okN.N}`], textposition: "top center", marker: { color: css("--good"), size: 14, line: { width: 2, color: css("--bg") } }, hovertemplate: `N %{x}: $%{y:.3f} в час — последнее N, где выполняется «${slo.label}»<extra></extra>` });
+    if (okN) t.push({ type: "scatter", mode: "markers+text", name: `наибольшее N при «${slo.label}»`, x: [okN.N], y: [money(okN)], text: [`N ${okN.N}`], textposition: "top center", marker: { color: css("--good"), size: 14, line: { width: 2, color: css("--bg") } }, hovertemplate: `N %{x}: $%{y:.3f} в час<extra></extra>` });
     return [t, lay("N — пользователей одновременно (лог. шкала)", "выручка, $ в час", { xaxis: { ...baseLayout().xaxis, type: "log", title: { text: "N — пользователей одновременно (лог. шкала)" } } })];
   }, true);
-  briefRead(s, `Линия — выручка в час при данном N по шагам 1–4 (цены Qwen3-8B × 0,6/8). Зелёная точка — последнее N, при котором выполняется требование «${slo.label}». Горизонтали — затраты в час: аренда карты и электроэнергия своей.`,
-    okN ? `Выручка растёт до предела памяти и дальше стоит. При «${slo.label}» эта нагрузка даёт $${num(money(okN), 3)} в час при N = ${okN.N}: ${money(okN) > E.gpu.rent_per_hour ? "больше аренды" : "меньше аренды — арендовать карту убыточно"}, ${money(okN) > E.electricity_per_hour ? "своя карта окупает электроэнергию" : "даже своя карта не окупает электроэнергию"}.` : `Требование «${slo.label}» не выполняется ни при каком N.`);
+  briefRead(s, `Линия — выручка в час при данном N. Зелёная точка — наибольшее N, при котором выполняется «${slo.label}». Горизонтали — затраты в час: аренда карты и электроэнергия своей.`,
+    okN ? `При «${slo.label}» ${w.load} даёт $${num(money(okN), 3)} в час при N = ${okN.N}: ${money(okN) > E.gpu.rent_per_hour ? "больше аренды" : "меньше аренды — арендовать карту убыточно"}${money(okN) > E.electricity_per_hour ? ", своя карта окупает электроэнергию" : ", своя карта не окупает даже электроэнергию"}.` : `Требование «${slo.label}» не выполняется ни при каком N.`);
   econCharts(s, briefState.slo);
   econTable(s, [slo.label]);
-
-  // Accuracy.
-  s = section("Насколько верить",
-    `Прогнозы «от N» сравнены с замером на ${acc.below.points + acc.above.points} точках закрытого цикла, по которым ничего не подбиралось. Ошибка — среднее отклонение прогноза от замера по модулю.`);
-  const names = { rps: "Запросов в секунду", otps: "Выходных токенов в секунду", ttft_p50: "Ожидание первого токена, медиана", ttft_p90: "Ожидание первого токена, 90%", tpot: "Время между токенами (TPOT)" };
-  table(s, Object.entries(names).map(([k, n]) => ({ n, below: acc.below[`${k}_abs`], above: acc.above[`${k}_abs`] })), [
-    { label: "что прогнозируем", key: "n", text: true },
-    { label: `до предела памяти (${acc.below.points} точек)`, key: "below", fmt: (v) => `±${pct0(v)}` },
-    { label: `после (${acc.above.points} точек)`, key: "above", fmt: (v) => `±${pct0(v)}` },
-  ]);
 }
 
 function renderReport(index) {
