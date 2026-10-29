@@ -450,8 +450,8 @@ class NanoVLLMBackend:
                 request_id = str(request["request_id"])
                 held: set[int] = set()
                 eligible = (
-                    (len(prompt) + manager.block_size - 1) // manager.block_size - 1
-                )
+                    len(prompt) + manager.block_size - 1
+                ) // manager.block_size - 1
 
                 def hash_donor(
                     seq: Any,
@@ -846,7 +846,7 @@ class NanoVLLMBackend:
                 seqs = state.get("seqs", [])
                 snapshots = state.get("seq_snapshot", {})
                 produced_by_seq = {}
-                for seq, token_id in zip(seqs, result or []):
+                for seq, token_id in zip(seqs, result or [], strict=False):
                     request_id = self._request_id_for_seq(seq)
                     snap = snapshots.get(seq.seq_id, {})
                     is_discarded_prefill_sample = state.get("is_prefill") and snap.get(
@@ -1129,7 +1129,7 @@ class NanoVLLMBackend:
         if self.measurement_profile == "minimal":
             # Pinned generate preserves sequence order in its returned list; this is
             # the real upstream output, not a reconstructed or seeded substitute.
-            for request, output in zip(requests, upstream_outputs):
+            for request, output in zip(requests, upstream_outputs, strict=False):
                 request_id = str(request["request_id"])
                 self._request_output_ids[request_id] = [
                     int(token) for token in output["token_ids"]

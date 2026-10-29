@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import hydra
 import sys
 from pathlib import Path
+
+import hydra
 from omegaconf import DictConfig
 
 from taei.launch import maybe_launch_detached

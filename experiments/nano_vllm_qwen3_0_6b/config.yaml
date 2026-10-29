@@ -12,6 +12,7 @@ experiment:
 
 mode: plan
 dataset:
+  workload_protocol: six_set_paired_prefix_sweep_v1
   model_path: ${oc.env:TAEI_QWEN3_0_6B_PATH,${oc.env:HOME}/.cache/taei/models/Qwen3-0.6B}
   output_root: ${hydra:runtime.output_dir}/runs
   order_seed: 20261023

@@ -720,7 +720,7 @@ def _analyze_path(path, filename):
             raise ValueError("Invalid ZIP archive.") from exc
     with archive as zf:
         infos = zf.infolist()
-        seen, total = set(), 0
+        seen = set()
         for info in infos:
             member_path = PurePosixPath(info.filename)
             mode = (
@@ -748,7 +748,6 @@ def _analyze_path(path, filename):
                 zipfile.ZIP_DEFLATED,
             ):
                 raise ValueError("Unsupported ZIP compression method.")
-            total += info.file_size
             if info.file_size and (
                 not info.compress_size
                 or info.file_size / info.compress_size > MAX_RATIO

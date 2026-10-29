@@ -1,15 +1,18 @@
-"""Optional minimal/detailed timing diagnostic, without validation or acceptance gates."""
+"""Optional minimal/detailed timing diagnostic.
+
+No validation or acceptance gates are applied.
+"""
 
 from __future__ import annotations
 
 import hashlib
-import json
 import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ._artifacts import canonical_json, write_json
 from .engine import PINNED_REVISION, NanoVLLMBackend
 from .metadata import collect_environment, collect_hardware, collect_model
 from .workload import build_workload
@@ -31,9 +34,7 @@ TIMING_POLICY = {
 
 
 def _canonical(value: Any) -> bytes:
-    return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
-    ).encode()
+    return canonical_json(value)
 
 
 def _sha_bytes(value: bytes) -> str:
@@ -41,10 +42,7 @@ def _sha_bytes(value: bytes) -> str:
 
 
 def _write_json(path: Path, value: Any) -> None:
-    path.write_text(
-        json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-        encoding="utf-8",
-    )
+    write_json(path, value)
 
 
 def _execute_profile(

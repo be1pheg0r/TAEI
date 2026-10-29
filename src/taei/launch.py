@@ -160,6 +160,18 @@ def launch_status(metadata_path: str | Path) -> dict[str, object]:
             alive = True
         else:
             alive = True
+            # ``kill(pid, 0)`` also succeeds for exited children that remain
+            # zombies while the system reaper has not collected them yet.
+            stat_path = Path(f"/proc/{pid}/stat")
+            if stat_path.is_file():
+                try:
+                    stat = stat_path.read_text(encoding="utf-8")
+                    process_state = stat.rsplit(")", 1)[1].split()[0]
+                except (OSError, IndexError):
+                    pass
+                else:
+                    if process_state == "Z":
+                        alive = False
     return {**metadata, "metadata_path": str(path), "pid_alive": alive}
 
 

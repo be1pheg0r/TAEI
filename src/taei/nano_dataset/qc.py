@@ -229,9 +229,10 @@ def _audit_run_directory(directory: str | Path) -> dict[str, Any]:
 
     requests = data.get("requests.jsonl", [])
     workload_requests = workload.get("requests")
-    if not isinstance(workload_requests, list) or len(workload_requests) != 32:
-        errors.append("workload must define exactly 32 requests")
+    if not isinstance(workload_requests, list) or not workload_requests:
+        errors.append("workload must define a nonempty request list")
         workload_requests = []
+    expected_request_count = len(workload_requests)
     req_by_id: dict[str, dict[str, Any]] = {}
     expected_ids = []
     for position, request in enumerate(workload_requests):
@@ -298,11 +299,9 @@ def _audit_run_directory(directory: str | Path) -> dict[str, Any]:
                     f"request {rid} actual output count disagrees with output IDs"
                 )
     if run.get("status") == "success" and (
-        len(requests) != 32 or seen != set(req_by_id)
+        len(requests) != expected_request_count or seen != set(req_by_id)
     ):
-        errors.append(
-            "successful run must contain each of the 32 workload requests exactly once"
-        )
+        errors.append("successful run must contain each workload request exactly once")
 
     steps = data.get("steps.jsonl", [])
     prefix_mode = run.get("prefix_cache_mode")
@@ -376,6 +375,7 @@ def _audit_run_directory(directory: str | Path) -> dict[str, Any]:
             errors.append(f"step {sid} reports prefix reuse while prefix cache is off")
 
     links: set[tuple[Any, Any]] = set()
+    requests_by_step: dict[Any, set[Any]] = defaultdict(set)
     for row in data.get("step_requests.jsonl", []):
         rid, sid = row.get("request_id"), row.get("step_id")
         if rid not in req_by_id:
@@ -386,10 +386,9 @@ def _audit_run_directory(directory: str | Path) -> dict[str, Any]:
         if pair in links:
             errors.append(f"duplicate step_requests join {pair}")
         links.add(pair)
+        requests_by_step[sid].add(rid)
     for sid, step in step_map.items():
-        if set(step.get("request_ids", [])) != {
-            rid for linked_sid, rid in links if linked_sid == sid
-        }:
+        if set(step.get("request_ids", [])) != requests_by_step[sid]:
             errors.append(
                 f"step {sid} request_ids do not exactly match step_requests joins"
             )
@@ -507,8 +506,10 @@ def _audit_run_directory(directory: str | Path) -> dict[str, Any]:
         if not isinstance(metrics, dict):
             errors.append("successful runs.json metrics must be an object")
         else:
-            if metrics.get("request_count") != 32:
-                errors.append("successful run metrics request_count must equal 32")
+            if metrics.get("request_count") != expected_request_count:
+                errors.append(
+                    "successful run metrics request_count must match workload"
+                )
             actual_outputs = sum(
                 len(row.get("output_token_ids", []))
                 for row in requests

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import time
 import traceback
 import uuid
 from pathlib import Path
 from typing import Any
 
+from ._artifacts import canonical_json, write_json, write_jsonl
 from .metadata import collect_environment, collect_hardware, collect_model
 from .request_scaling import PROTOCOL as SCALING_PROTOCOL
 from .request_scaling import build_scaling_plan
@@ -35,13 +35,7 @@ TRACE_TABLES = (
 
 
 def _canonical(value: Any) -> bytes:
-    return json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    ).encode()
+    return canonical_json(value)
 
 
 def _sha(value: Any) -> str:
@@ -49,21 +43,11 @@ def _sha(value: Any) -> str:
 
 
 def _write_json(path: Path, value: Any) -> None:
-    path.write_text(
-        json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-        encoding="utf-8",
-    )
+    write_json(path, value)
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    with path.open("w", encoding="utf-8") as stream:
-        for row in rows:
-            stream.write(
-                json.dumps(
-                    row, ensure_ascii=False, allow_nan=False, separators=(",", ":")
-                )
-                + "\n"
-            )
+    write_jsonl(path, rows)
 
 
 def build_plan(
