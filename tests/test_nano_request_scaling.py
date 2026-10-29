@@ -34,7 +34,12 @@ def test_scaling_plan_and_paired_workloads():
             r["requested_output_tokens"] == 1000 and r["ignore_eos"] for r in requests
         )
         assert all(
-            r["prime_input_token_ids"][:-1] == r["input_token_ids"][:1024]
+            r["prime_input_token_ids"][:-1]
+            == r["input_token_ids"][: r["prefix_token_count"]]
+            and r["prefix_token_count"] % 256 == 0
+            and 0.10 <= r["target_cache_hit_ratio_on"] <= 0.95
+            and r["target_cache_hit_ratio_on"]
+            == r["prefix_token_count"] / r["prompt_length"]
             for r in requests
         )
         key = (row["seed"], row["request_count"])
@@ -43,6 +48,20 @@ def test_scaling_plan_and_paired_workloads():
         workloads[key] = workload
     for seed in (42, 43, 44):
         full = workloads[(seed, 16)]["requests"]
+        assert full[0]["target_cache_hit_ratio_on"] < 0.13
+        assert full[1]["target_cache_hit_ratio_on"] > 0.90
+        assert sum(r["target_cache_hit_ratio_on"] >= 0.5 for r in full) >= 10
+        longest = max(full, key=lambda r: r["prefix_token_count"])
+        assert all(
+            r["input_token_ids"][: r["prefix_token_count"]]
+            == longest["input_token_ids"][: r["prefix_token_count"]]
+            for r in full
+        )
+        assert max(r["prefix_token_count"] for r in full) // 256 < 218
+        assert len({r["prefix_token_count"] for r in full}) > 8
+        assert workloads[(seed, 16)]["summary"]["cache_hit_tokens_on_targets"] == [
+            r["prefix_token_count"] for r in full
+        ]
         assert sorted(r["prompt_length"] for r in full) == [
             3000,
             3667,
@@ -68,6 +87,61 @@ def test_scaling_plan_and_paired_workloads():
 def test_scaling_rejects_insufficient_context():
     with pytest.raises(ValueError, match="14000"):
         build_plan(workload_protocol=PROTOCOL, context_cap=13999)
+
+
+@pytest.mark.parametrize("seed", [42, 43, 44])
+def test_shared_prefixes_prime_and_hit_with_real_block_manager(seed):
+    from types import SimpleNamespace
+
+    blocks = pytest.importorskip("nanovllm.engine.block_manager")
+    sequence = pytest.importorskip("nanovllm.engine.sequence")
+    pytest.importorskip("torch")
+    from taei.nano_dataset.engine import NanoVLLMBackend
+
+    class Engine:
+        def __init__(self):
+            self.scheduler = SimpleNamespace(
+                block_manager=blocks.BlockManager(218, 256), waiting=[]
+            )
+
+        def add_request(self, prompt, sampling):
+            self.scheduler.waiting.append(sequence.Sequence(prompt))
+
+        def generate(self, prompts, sampling, **kwargs):
+            manager = self.scheduler.block_manager
+            for prompt, params in zip(prompts, sampling, strict=True):
+                seq = sequence.Sequence(prompt, params)
+                cached = manager.can_allocate(seq)
+                assert cached >= 0
+                manager.allocate(seq, cached)
+                seq.num_scheduled_tokens = len(seq) - seq.num_cached_tokens
+                manager.hash_blocks(seq)
+                manager.deallocate(seq)
+
+    requests = build_workload("qwen3_8b_request_scaling_n16", seed)["requests"]
+    backend = NanoVLLMBackend.__new__(NanoVLLMBackend)
+    backend.engine = Engine()
+    backend._originals = []
+    backend._primed_blocks_by_request = {}
+    backend._prompt_cache_hits = {}
+    backend.prefix_cache_mode = "on"
+    backend.measurement_profile = "primary"
+    backend.seed = seed
+    priming = backend.prime_requests(requests)
+    assert priming["retained_prefix_blocks"] == max(
+        r["prefix_token_count"] // 256 for r in requests
+    )
+    backend._metric_request_ids = iter(r["request_id"] for r in requests)
+    manager = backend.engine.scheduler.block_manager
+    for request in requests:
+        backend.engine.add_request(request["input_token_ids"], None)
+        seq = backend.engine.scheduler.waiting.pop()
+        cached = manager.can_allocate(seq)
+        assert cached * 256 == request["expected_cache_hit_tokens_on"]
+        manager.allocate(seq, cached)
+        manager.deallocate(seq)
+    assert not backend._primed_blocks_by_request
+    assert len(manager.free_block_ids) == 218
 
 
 def test_scaling_hydra_plan_runs_without_gpu_or_model(tmp_path):

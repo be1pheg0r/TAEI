@@ -10,7 +10,9 @@ NAME = "qwen3_8b_request_scaling"
 COUNTS = (1, 2, 4, 8, 16)
 SEEDS = (42, 43, 44)
 LENGTHS = tuple(3000 + (10000 * i + 7) // 15 for i in range(16))
-PREFIX = 1024
+BLOCK_SIZE = 256
+# Interleave low and high targets, with most requests above 50% reuse.
+PREFIX_TARGET_PERCENT = (10, 95, 25, 90, 40, 85, 50, 80, 55, 75, 60, 70, 65, 92, 88, 82)
 OUTPUT = 1000
 
 
@@ -22,9 +24,18 @@ def build_scaling_workload(name: str, seed: int) -> dict[str, Any]:
     rng = random.Random(seed)
     lengths = list(LENGTHS)
     rng.shuffle(lengths)
+    prefix_rng = random.Random(f"scaling-shared-prefix:{seed}")
+    shared_prefix = [prefix_rng.randrange(1000, 90000) for _ in range(max(LENGTHS))]
     requests = []
     for index, length in enumerate(lengths[:count]):
+        min_blocks = (length + 10 * BLOCK_SIZE - 1) // (10 * BLOCK_SIZE)
+        max_blocks = (95 * length) // (100 * BLOCK_SIZE)
+        target_blocks = round(
+            PREFIX_TARGET_PERCENT[index] * length / (100 * BLOCK_SIZE)
+        )
+        prefix = max(min_blocks, min(max_blocks, target_blocks)) * BLOCK_SIZE
         ids = [rng.randrange(1000, 90000) for _ in range(length)]
+        ids[:prefix] = shared_prefix[:prefix]
         family = f"scaling-s{seed}-r{index:02}"
         requests.append(
             {
@@ -34,12 +45,12 @@ def build_scaling_workload(name: str, seed: int) -> dict[str, Any]:
                 "workload_class": "hit",
                 "cache_intent": "hit",
                 "prompt_length": length,
-                "prefix_family_id": family,
-                "prefix_group_id": family,
-                "prefix_token_count": PREFIX,
-                "expected_cache_hit_tokens_on": PREFIX,
-                "target_cache_hit_ratio_on": PREFIX / length,
-                "prime_input_token_ids": ids[:PREFIX] + [90001],
+                "prefix_family_id": f"scaling-s{seed}-shared",
+                "prefix_group_id": f"scaling-s{seed}-shared",
+                "prefix_token_count": prefix,
+                "expected_cache_hit_tokens_on": prefix,
+                "target_cache_hit_ratio_on": prefix / length,
+                "prime_input_token_ids": ids[:prefix] + [90001],
                 "input_token_ids": ids,
                 "requested_output_tokens": OUTPUT,
                 "temperature": 0.6,
@@ -61,7 +72,7 @@ def build_scaling_workload(name: str, seed: int) -> dict[str, Any]:
             "logical_prompt_tokens": sum(lengths[:count]),
             "cache_hit_targets": count,
             "cache_miss_targets": 0,
-            "cache_hit_tokens_on_targets": [PREFIX] * count,
+            "cache_hit_tokens_on_targets": [r["prefix_token_count"] for r in requests],
             "priming_requests_excluded_from_measurement": True,
         },
     }
@@ -121,7 +132,8 @@ def build_scaling_plan(
             "prompt_lengths": list(LENGTHS),
             "request_counts": list(COUNTS),
             "requested_output_tokens_each": OUTPUT,
-            "prefix_tokens": PREFIX,
+            "prefix_target_percent_by_request": list(PREFIX_TARGET_PERCENT),
+            "prefix_block_size": BLOCK_SIZE,
             "donor_requests_on": sum(COUNTS) * len(SEEDS),
             "donor_requests_off": 0,
             "warmup_requests_per_launch": 1,

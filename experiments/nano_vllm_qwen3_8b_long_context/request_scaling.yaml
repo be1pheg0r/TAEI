@@ -1,4 +1,6 @@
 # 1, 2, 4, 8, 16 submitted requests; cache ON/OFF, dynamic scheduler only.
+# Hit requests use 10%–95% target prefix reuse, rounded to 256-token blocks.
+# Requests share a prefix; target order and generation are in request_scaling.py.
 defaults:
   - base
   - _self_
@@ -9,7 +11,7 @@ hydra:
 
 experiment:
   name: nano_vllm_qwen3_8b_request_scaling
-  description: Paired request-count and prefix-cache scaling pilot.
+  description: Paired request-count and 10-95 percent prefix-cache scaling pilot.
 mode: plan
 dataset:
   workload_protocol: qwen3_8b_request_scaling_v1
