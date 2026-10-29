@@ -15,6 +15,7 @@ from .request_scaling import PROTOCOL as SCALING_PROTOCOL
 from .request_scaling import build_scaling_plan
 from .schema import DATASET_SCHEMA, FIELD_DICTIONARY, SCHEMA_VERSION
 from .workload import (
+    DIAGNOSTIC_WORKLOAD_PROTOCOL,
     LONG_CONTEXT_SETS,
     WORKLOAD_SETS,
     build_long_context_plan,
@@ -79,6 +80,52 @@ def build_plan(
         )
         plan["schema_version"] = SCHEMA_VERSION
         return plan
+    if workload_protocol == DIAGNOSTIC_WORKLOAD_PROTOCOL:
+        if context_cap < 14_000:
+            raise ValueError(
+                "configured max_model_len is below diagnostic requirement 14000"
+            )
+        run = {
+            "run_id": "D01",
+            "condition_id": "C01",
+            "set_id": "qwen3_8b_cache_on_diagnostic",
+            "pair_id": "qwen3_8b_cache_on_diagnostic-seed-42",
+            "split_group_id": "qwen3_8b_cache_on_diagnostic-family",
+            "repeat_id": "01",
+            "seed": 42,
+            "workload_id": "qwen3_8b_cache_on_diagnostic",
+            "prefix_cache_mode": "on",
+            "scheduler_mode": "upstream_dynamic",
+            "run_order": 1,
+        }
+        workload = build_workload(run["workload_id"], run["seed"])
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "matrix": [run],
+            "run_count": 1,
+            "condition_count": 1,
+            "request_count": workload["summary"]["request_count"],
+            "workload_protocol": DIAGNOSTIC_WORKLOAD_PROTOCOL,
+            "workload_sets": [run["workload_id"]],
+            "workload_summaries": {workload["workload_id"]: workload["summary"]},
+            "seed_count": 1,
+            "seeds": [run["seed"]],
+            "treatments_per_set_seed": 1,
+            "logical_prompt_tokens": workload["summary"]["logical_prompt_tokens"],
+            "requested_output_tokens": workload["summary"][
+                "requested_output_token_total"
+            ],
+            "validation_status": "disabled",
+            "schedule": {
+                "prompt_lengths": [13_000] * 4,
+                "output_budgets": [1_000] * 8,
+                "max_prompt_plus_output_tokens": 14_000,
+                "prefix_tokens_per_hit": [2_048, 4_096, 6_144, 8_192],
+                "measured_requests_per_launch": 8,
+                "donor_requests_per_launch": 4,
+                "launches": 1,
+            },
+        }
     if workload_protocol == "qwen3_8b_long_context_32k_v1":
         plan = build_long_context_plan(
             context_cap=context_cap,

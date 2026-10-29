@@ -34,6 +34,7 @@ def test_sample_round_trip_and_metadata():
         "status": "finished",
         "run_count": 1,
         "accepted_count": 0,
+        "metrics_are_preview": False,
         "record_count": len(body["records"]),
         "attempt_count": 1,
         "record_preview_count": len(body["records"]),
@@ -83,6 +84,139 @@ def test_repeated_runs_metrics_accumulate():
     result = _analyze(make_zip({"run.log": log}), "runs.zip")
     assert [run["run_id"] for run in result["runs"]] == ["a", "b", "c"]
     assert len(result["tables"]["runs"]) == 3
+
+
+def test_current_runtime_log_contract_parses_lifecycle_and_compact_metrics():
+    log = (
+        "INFO     | Starting experiment: nano_vllm_dataset_rtx_a4000_tp2\n"
+        "INFO     | metrics: mode=plan, run_count=48, request_count=768, \n"
+        "logical_prompt_tokens=1774040, requested_output_tokens=90240, +2 more\n"
+        "INFO     | Finished experiment: nano_vllm_dataset_rtx_a4000_tp2 · "
+        "results: /run/results.json\n"
+    )
+    result = _analyze(make_zip({"run.log": log}), "runtime-logs.zip")
+    assert result["summary"]["experiment"] == "nano_vllm_dataset_rtx_a4000_tp2"
+    assert result["summary"]["status"] == "finished"
+    assert result["metrics"] == {
+        "mode": "plan",
+        "run_count": 48,
+        "request_count": 768,
+        "logical_prompt_tokens": 1774040,
+        "requested_output_tokens": 90240,
+    }
+    assert result["summary"]["metrics_are_preview"] is True
+    assert "Краткая сводка" in next(
+        record["description"]
+        for record in result["records"]
+        if record["kind"] == "metric-summary"
+    )
+    assert result["runs"] == []  # Compact summaries do not contain attempt records.
+
+
+def test_results_json_is_authoritative_when_included_in_archive():
+    result = _analyze(
+        make_zip(
+            {
+                "run.log": "INFO     | metrics: mode=plan, run_count=2, +1 more\n",
+                "results.json": json.dumps(
+                    {"mode": "plan", "run_count": 2, "request_count": 12}
+                ),
+            }
+        ),
+        "with-results.zip",
+    )
+    assert result["metrics"] == {"mode": "plan", "run_count": 2, "request_count": 12}
+    assert result["summary"]["metrics_are_preview"] is False
+
+
+def test_compact_metrics_preview_and_scalar_types_are_not_guessed():
+    result = _analyze(
+        make_zip(
+            {
+                "run.log": (
+                    "INFO | metrics: mode=run, enabled=True, disabled=False, "
+                    "optional=None, attempt_count=48\n"
+                )
+            }
+        ),
+        "compact.zip",
+    )
+    assert result["summary"]["metrics_are_preview"] is True
+    assert result["metrics"] == {
+        "mode": "run",
+        "enabled": True,
+        "disabled": False,
+        "optional": None,
+        "attempt_count": 48,
+    }
+
+
+def test_results_after_record_preview_still_supply_full_runs_and_metrics():
+    runs = [
+        {
+            "run_id": f"R{i:02}",
+            "attempt_id": f"attempt-{i}",
+            "primary_status": "accepted" if i == 0 else "not_evaluated",
+            "qc": {"status": "disabled", "valid": None},
+        }
+        for i in range(48)
+    ]
+    result = _analyze(
+        make_zip(
+            {
+                "steps.jsonl": "".join(
+                    json.dumps({"step_id": f"s{i}"}) + "\n" for i in range(501)
+                ),
+                "results.json": json.dumps(
+                    {
+                        "mode": "run",
+                        "attempt_count": 48,
+                        "accepted_primary_count": 1,
+                        "runs": runs,
+                    }
+                ),
+            }
+        ),
+        "late-results.zip",
+    )
+    assert result["summary"]["record_preview_count"] == 500
+    assert result["summary"]["record_count"] == 502
+    assert result["metrics"]["accepted_primary_count"] == 1
+    assert len(result["runs"]) == 48
+    assert result["summary"]["attempt_count"] == 48
+    assert result["summary"]["accepted_count"] == 1
+    assert len(result["tables"]["runs"]) == 48
+    assert result["tables"]["_meta"]["counts"]["runs"] == 48
+    assert result["tables"]["_meta"]["preview_rows"]["runs"] == 48
+    assert result["tables"]["runs"][0]["source"] == "results.json"
+
+
+def test_compact_metrics_after_record_preview_are_still_aggregated():
+    result = _analyze(
+        make_zip(
+            {
+                "steps.jsonl": "".join(
+                    json.dumps({"step_id": f"s{i}"}) + "\n" for i in range(501)
+                ),
+                "run.log": "INFO | metrics: mode=run, attempt_count=48\n",
+            }
+        ),
+        "late-compact.zip",
+    )
+    assert result["summary"]["record_preview_count"] == 500
+    assert result["metrics"] == {"mode": "run", "attempt_count": 48}
+    assert result["summary"]["metrics_are_preview"] is True
+
+
+def test_runtime_lifecycle_after_record_preview_still_sets_final_status():
+    log = "INFO | Starting experiment: long_run\n"
+    log += "INFO | working\n" * 501
+    log += "INFO | metrics: attempt_count=48\n"
+    log += "INFO | Finished experiment: long_run · results: /run/results.json\n"
+    result = _analyze(make_zip({"run.log": log}), "long-runtime.zip")
+    assert result["summary"]["record_preview_count"] == 500
+    assert result["summary"]["experiment"] == "long_run"
+    assert result["summary"]["status"] == "finished"
 
 
 def test_nonfinite_and_deep_json_rejected():

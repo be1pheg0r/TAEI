@@ -1,4 +1,4 @@
-# One-run cache-on diagnostic matching the first archived long-context request.
+# One-run diagnostic with 13,000-token inputs and 1,000-token output budgets.
 defaults:
   - base
   - _self_
@@ -9,11 +9,11 @@ hydra:
 
 experiment:
   name: nano_vllm_qwen3_8b_long_context_cache_on_diagnostic
-  description: Single cache-on diagnostic run; not a cause-isolation or performance study.
+  description: Single cache-on diagnostic run with paired shared-prefix hits and misses; not a performance study.
 
 mode: plan
 dataset:
-  workload_protocol: qwen3_8b_long_context_32k_v1
+  workload_protocol: qwen3_8b_cache_on_diagnostic_v1
   model_path: ${oc.env:TAEI_QWEN3_8B_PATH,${oc.env:HOME}/.cache/taei/models/Qwen3-8B}
   output_root: ${hydra:runtime.output_dir}/runs
   order_seed: 20261023

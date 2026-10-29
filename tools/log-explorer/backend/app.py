@@ -370,6 +370,11 @@ def _append(records, rec):
         explanation = FIELD_DESCRIPTIONS.get(
             metric, f"Метрика {metric} из журнала; семантика не определена схемой."
         )
+    elif rec.get("kind") == "metric-summary":
+        explanation = (
+            "Краткая сводка скалярных метрик runtime; она не содержит полных "
+            "результатов или трасс. Смотрите summary.metrics_are_preview."
+        )
     elif isinstance(data, dict) and data.get("event") == "experiment":
         explanation = (
             "Событие жизненного цикла эксперимента; finished не означает "
@@ -392,7 +397,43 @@ def _append(records, rec):
     records.append(rec)
 
 
-def _parse_log(content, name, records, warnings):
+def _parse_compact_metrics(text):
+    """Parse only scalar key/value pairs printed by taei.metrics.log_metrics."""
+    values = {}
+    omitted = False
+    for part in text.split(","):
+        item = part.strip()
+        if re.fullmatch(r"\+\d+ more", item):
+            omitted = True
+            continue
+        if "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        key = key.strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*", key):
+            continue
+        scalar = value.strip()
+        if scalar.lower() in {"true", "false"}:
+            parsed = scalar.lower() == "true"
+        elif scalar.lower() in {"none", "null"}:
+            parsed = None
+        else:
+            parsed = _number(scalar)
+        if isinstance(parsed, str) and parsed.lower() in {
+            "nan",
+            "inf",
+            "+inf",
+            "-inf",
+            "infinity",
+            "+infinity",
+            "-infinity",
+        }:
+            raise ValueError("Non-finite compact metric number.")
+        values[key] = parsed
+    return values, omitted
+
+
+def _parse_log(content, name, records, warnings, aggregates=None):
     lines = content.splitlines()
     i = 0
     while i < len(lines):
@@ -416,7 +457,40 @@ def _parse_log(content, name, records, warnings):
         level, msg = match.group(1).upper(), match.group(2)
         start, rawmsg = i, msg
         data, kind = None, "text"
-        if msg.startswith("metric ") and "=" in msg:
+        lifecycle = re.fullmatch(
+            r"(Starting|Finished) experiment:\s*(.+?)(?:\s+·\s+results:.*)?",
+            msg,
+        )
+        if lifecycle:
+            status = "started" if lifecycle.group(1) == "Starting" else "finished"
+            data = {
+                "event": "experiment",
+                "value": lifecycle.group(2).split(" · results:", 1)[0].strip(),
+                "status": status,
+            }
+            kind = "event"
+        elif msg.startswith("metrics:"):
+            fragments = [msg[len("metrics:") :].strip()]
+            while i + 1 < len(lines) and not LEVEL.match(lines[i + 1]):
+                continuation = lines[i + 1].strip()
+                if not (
+                    "=" in continuation or re.fullmatch(r"\+\d+ more", continuation)
+                ):
+                    break
+                i += 1
+                fragments.append(continuation)
+                if sum(map(len, fragments)) > MAX_LINE:
+                    raise ValueError("Wrapped compact metrics exceed line limit.")
+            rawmsg = msg + (
+                "\n" + "\n".join(fragments[1:]) if len(fragments) > 1 else ""
+            )
+            values, omitted = _parse_compact_metrics(" ".join(fragments))
+            data = {"event": "metrics", "values": values, "omitted": omitted}
+            kind = "metric-summary"
+            if aggregates is not None:
+                aggregates["metrics"].update(values)
+                aggregates["compact_metrics"] = True
+        elif msg.startswith("metric ") and "=" in msg:
             key, value = msg[len("metric ") :].split("=", 1)
             fragments = [value]
             depth = (
@@ -450,6 +524,12 @@ def _parse_log(content, name, records, warnings):
                 },
                 "metric",
             )
+            if aggregates is not None:
+                aggregates["metrics"][key.strip()] = data["value"]
+                if key.strip() == "runs" and isinstance(data["value"], list):
+                    aggregates["metric_runs"].extend(
+                        (name, run) for run in data["value"]
+                    )
         elif "=" in msg:
             left, value = msg.split("=", 1)
             event, _, suffix = left.strip().partition(" ")
@@ -463,6 +543,14 @@ def _parse_log(content, name, records, warnings):
             if suffix:
                 data["details"] = suffix
             kind = "event"
+        if aggregates is not None and kind == "event" and isinstance(data, dict):
+            if data.get("event") == "experiment":
+                aggregates["experiment"] = str(data.get("value", "")).split(
+                    " status=", 1
+                )[0]
+                aggregates["status"] = data.get("status") or aggregates["status"]
+            elif data.get("event") == "status":
+                aggregates["status"] = data.get("value")
         _append(
             records,
             {
@@ -523,16 +611,22 @@ def _record_row(name, row, records, tables, line, kind):
     )
 
 
-def _parse_member(name, raw, records, tables, warnings, json_runs):
+def _parse_member(name, raw, records, tables, warnings, json_runs, aggregates=None):
     if MAX_EXPANDED is not None and len(raw) > MAX_EXPANDED:
         raise ValueError("Member exceeds parser limit.")
     text = raw.decode("utf-8-sig", errors="replace")
     kind = _kind(name)
     if kind == "log":
-        _parse_log(text, name, records, warnings)
+        _parse_log(text, name, records, warnings, aggregates)
     elif kind == "json":
         obj = _json_loads(text) if text.strip() else None
         if obj is not None:
+            if (
+                Path(name).name.casefold() == "results.json"
+                and isinstance(obj, dict)
+                and aggregates is not None
+            ):
+                aggregates["results_docs"].append((name, obj))
             if (
                 Path(name).stem == "runs"
                 and isinstance(obj, dict)
@@ -661,6 +755,14 @@ def _analyze_path(path, filename):
             ):
                 raise ValueError("Archive compression ratio exceeds limit.")
         files, records, warnings, json_runs = [], PreviewRecords(), [], []
+        aggregates = {
+            "metrics": {},
+            "metric_runs": [],
+            "compact_metrics": False,
+            "results_docs": [],
+            "experiment": None,
+            "status": None,
+        }
         tables = {table: [] for table in TABLES}
         tables["_counts"] = {table: 0 for table in TABLES}
 
@@ -672,7 +774,9 @@ def _analyze_path(path, filename):
                 raw = b"".join(blocks)
                 if len(raw) != size:
                     raise ValueError(f"Short archive member: {name}")
-                _parse_member(name, raw, records, tables, warnings, json_runs)
+                _parse_member(
+                    name, raw, records, tables, warnings, json_runs, aggregates
+                )
             files.append(
                 {
                     "name": name,
@@ -709,7 +813,13 @@ def _analyze_path(path, filename):
                 raw = zf.read(info)
                 try:
                     _parse_member(
-                        info.filename, raw, records, tables, warnings, json_runs
+                        info.filename,
+                        raw,
+                        records,
+                        tables,
+                        warnings,
+                        json_runs,
+                        aggregates,
                     )
                 except (
                     ValueError,
@@ -727,29 +837,40 @@ def _analyze_path(path, filename):
                         "records": records.total - before,
                     }
                 )
-    metrics, runs = {}, list(json_runs)
-    experiment = status = None
-    for rec in records:
-        data = rec.get("data")
-        if rec["kind"] == "event" and isinstance(data, dict):
-            if data.get("event") == "experiment":
-                experiment = str(data.get("value", "")).split(" status=", 1)[0]
-                status = data.get("status") or status
-            if data.get("event") == "status":
-                status = data.get("value")
-        if rec["kind"] == "metric" and isinstance(data, dict):
-            key, value = data.get("metric"), data.get("value")
-            if key == "runs" and isinstance(value, list):
-                runs.extend(value)
-                for run_index, run in enumerate(value, 1):
-                    if (
-                        isinstance(run, dict)
-                        and len(tables["runs"]) < MAX_PREVIEW_TABLE_ROWS
-                    ):
-                        tables["runs"].append(
-                            {"source": rec["source"], "row": run_index, **run}
-                        )
-            metrics[key] = value
+    metrics = dict(aggregates["metrics"])
+    metric_runs = [run for _, run in aggregates["metric_runs"]]
+    runs = list(json_runs) + metric_runs
+    for run_index, (run_source, run) in enumerate(aggregates["metric_runs"], 1):
+        tables["_counts"]["runs"] += 1
+        if isinstance(run, dict) and len(tables["runs"]) < MAX_PREVIEW_TABLE_ROWS:
+            tables["runs"].append({"source": run_source, "row": run_index, **run})
+    authoritative_results = None
+    if len(aggregates["results_docs"]) == 1:
+        results_source, authoritative_results = aggregates["results_docs"][0]
+        metrics.update(
+            {
+                key: value
+                for key, value in authoritative_results.items()
+                if key != "runs"
+            }
+        )
+        result_runs = authoritative_results.get("runs", [])
+        if isinstance(result_runs, list):
+            runs.extend(result_runs)
+            for run_index, run in enumerate(result_runs, 1):
+                tables["_counts"]["runs"] += 1
+                if (
+                    isinstance(run, dict)
+                    and len(tables["runs"]) < MAX_PREVIEW_TABLE_ROWS
+                ):
+                    tables["runs"].append(
+                        {"source": results_source, "row": run_index, **run}
+                    )
+    elif len(aggregates["results_docs"]) > 1:
+        warnings.append(
+            "Multiple results.json files have distinct provenance; none was merged."
+        )
+    experiment, status = aggregates["experiment"], aggregates["status"]
     attempts = runs
     unique_runs = {}
     for run in attempts:
@@ -817,6 +938,8 @@ def _analyze_path(path, filename):
             "run_count": len(runs),
             "attempt_count": len(attempts),
             "accepted_count": accepted,
+            "metrics_are_preview": aggregates["compact_metrics"]
+            and authoritative_results is None,
             "record_count": records.total,
             "record_preview_count": len(records),
             "record_preview_limit": MAX_ROWS,

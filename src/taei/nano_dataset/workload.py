@@ -63,6 +63,8 @@ def build_workload(name: str, seed: int) -> dict[str, Any]:
         from .request_scaling import build_scaling_workload
 
         return build_scaling_workload(name, seed)
+    if name == "qwen3_8b_cache_on_diagnostic":
+        return build_cache_on_diagnostic_workload(seed)
     if (
         name.endswith("_prefill_only")
         and name.removesuffix("_prefill_only") in LONG_CONTEXT_SETS
@@ -174,6 +176,80 @@ LONG_CONTEXT_OUTPUT_BUDGETS = (512, 512, 1024, 1024, 1024, 2048, 2048, 2048)
 # Nearest block-aligned prefix counts to targets 5%, 18%, ..., 95%.
 # These are independently distinct and fit upstream's eligible-block limit.
 LONG_CONTEXT_REUSE_BLOCKS = (1, 6, 15, 27, 43, 62, 85, 112)
+DIAGNOSTIC_WORKLOAD_PROTOCOL = "qwen3_8b_cache_on_diagnostic_v1"
+DIAGNOSTIC_PROMPT_LENGTH = 13_000
+DIAGNOSTIC_OUTPUT_TOKENS = 1_000
+DIAGNOSTIC_PREFIX_TOKENS = (2_048, 4_096, 6_144, 8_192)
+
+
+def build_cache_on_diagnostic_workload(seed: int) -> dict[str, Any]:
+    """Build four measured hit/miss pairs at 13K input and 1K output tokens."""
+    rng = random.Random((seed << 16) + 908_001)
+    requests = []
+    for index, prefix_tokens in enumerate(DIAGNOSTIC_PREFIX_TOKENS, 1):
+        shared = [rng.randrange(1000, 50000) for _ in range(prefix_tokens)]
+        for intent in ("hit", "miss"):
+            tail = [
+                rng.randrange(1000, 50000)
+                for _ in range(DIAGNOSTIC_PROMPT_LENGTH - prefix_tokens)
+            ]
+            input_ids = shared + tail
+            if intent == "miss":
+                input_ids[:BLOCK_SIZE] = [
+                    rng.randrange(50001, 90000) for _ in range(BLOCK_SIZE)
+                ]
+            family = f"cache-on-diagnostic-seed-{seed}-pair-{index:02d}"
+            requests.append(
+                {
+                    "request_id": f"cache-on-diagnostic-S{seed}-P{index:02d}-{intent}",
+                    "arrival_index": len(requests),
+                    "planned_arrival_offset_ns": 0,
+                    "workload_class": intent,
+                    "cache_intent": intent,
+                    "prompt_length": DIAGNOSTIC_PROMPT_LENGTH,
+                    "prefix_family_id": family if intent == "hit" else None,
+                    "prefix_group_id": family if intent == "hit" else None,
+                    "prefix_token_count": prefix_tokens if intent == "hit" else 0,
+                    "expected_cache_hit_tokens_on": prefix_tokens
+                    if intent == "hit"
+                    else 0,
+                    "target_cache_hit_ratio_on": (
+                        prefix_tokens / DIAGNOSTIC_PROMPT_LENGTH
+                        if intent == "hit"
+                        else 0
+                    ),
+                    "prime_input_token_ids": shared + [90001]
+                    if intent == "hit"
+                    else [],
+                    "input_token_ids": input_ids,
+                    "requested_output_tokens": DIAGNOSTIC_OUTPUT_TOKENS,
+                    "temperature": 0.6,
+                    "ignore_eos": True,
+                }
+            )
+    return {
+        "workload_id": f"qwen3_8b_cache_on_diagnostic_seed_{seed}",
+        "workload_name": "qwen3_8b_cache_on_diagnostic",
+        "set_id": "qwen3_8b_cache_on_diagnostic",
+        "seed": seed,
+        "requests": requests,
+        "summary": {
+            "request_count": len(requests),
+            "prompt_lengths": [DIAGNOSTIC_PROMPT_LENGTH] * 4,
+            "requested_output_token_counts": [DIAGNOSTIC_OUTPUT_TOKENS] * 8,
+            "input_token_counts": [DIAGNOSTIC_PROMPT_LENGTH] * 8,
+            "logical_prompt_tokens": DIAGNOSTIC_PROMPT_LENGTH * 8,
+            "requested_output_token_total": DIAGNOSTIC_OUTPUT_TOKENS * 8,
+            "max_prompt_plus_output_tokens": DIAGNOSTIC_PROMPT_LENGTH
+            + DIAGNOSTIC_OUTPUT_TOKENS,
+            "cache_hit_targets": 4,
+            "cache_miss_targets": 4,
+            "cache_hit_tokens_on_targets": [
+                row["prefix_token_count"] for row in requests
+            ],
+            "priming_requests_excluded_from_measurement": True,
+        },
+    }
 
 
 def build_long_context_workload(name: str, seed: int) -> dict[str, Any]:

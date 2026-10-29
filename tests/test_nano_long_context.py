@@ -210,3 +210,69 @@ def test_long_context_plan_rejects_too_small_sequence_capacity():
 
     with pytest.raises(ValueError, match="below workload requirement 32257"):
         build_long_context_plan(context_cap=32256)
+
+
+def test_cache_on_diagnostic_has_one_13k_input_1k_output_workload():
+    from taei.nano_dataset.orchestrator import build_plan
+
+    protocol = "qwen3_8b_cache_on_diagnostic_v1"
+    plan = build_plan(workload_protocol=protocol, context_cap=32768)
+    assert plan["run_count"] == 1
+    assert plan["request_count"] == 8
+    run = plan["matrix"][0]
+    assert run["prefix_cache_mode"] == "on"
+    assert run["scheduler_mode"] == "upstream_dynamic"
+    from jsonschema import Draft202012Validator
+
+    from taei.nano_dataset.schema import DATASET_SCHEMA
+
+    workload = build_workload(run["workload_id"], run["seed"])
+    Draft202012Validator(DATASET_SCHEMA["$defs"]["workload"]).validate(workload)
+    assert {len(row["input_token_ids"]) for row in workload["requests"]} == {13000}
+    assert {row["requested_output_tokens"] for row in workload["requests"]} == {1000}
+    hits = [row for row in workload["requests"] if row["cache_intent"] == "hit"]
+    misses = [row for row in workload["requests"] if row["cache_intent"] == "miss"]
+    assert len(hits) == len(misses) == 4
+    assert [row["prefix_token_count"] for row in hits] == [2048, 4096, 6144, 8192]
+    assert all(row["prefix_token_count"] == 0 for row in misses)
+    for hit, miss in zip(hits, misses, strict=True):
+        assert (
+            hit["input_token_ids"][: hit["prefix_token_count"]]
+            == hit["prime_input_token_ids"][:-1]
+        )
+        assert miss["input_token_ids"][:256] != hit["prime_input_token_ids"][:256]
+
+
+def test_cache_on_diagnostic_hydra_composition_and_plan_are_exact(tmp_path):
+    import json
+    import subprocess
+    import sys
+
+    from omegaconf import OmegaConf
+
+    output_dir = tmp_path / "diagnostic-plan"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "experiments/nano_vllm_qwen3_8b_long_context/run.py",
+            "--config-name",
+            "diagnostic",
+            "mode=plan",
+            f"hydra.run.dir={output_dir}",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    config = OmegaConf.load(output_dir / "config.yaml")
+    plan = json.loads((output_dir / "plan.json").read_text())
+    assert config.dataset.workload_protocol == "qwen3_8b_cache_on_diagnostic_v1"
+    assert config.dataset.run_limit == 1
+    assert config.engine.max_model_len == 32768
+    assert plan["run_count"] == 1
+    assert plan["request_count"] == 8
+    assert plan["matrix"][0]["prefix_cache_mode"] == "on"
+    assert plan["logical_prompt_tokens"] == 104000
+    assert plan["requested_output_tokens"] == 8000
+    assert not (output_dir / "model-download.json").exists()
