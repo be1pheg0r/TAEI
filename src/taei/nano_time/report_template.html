@@ -1917,29 +1917,16 @@ function renderDeck() {
   sel(ctl, E.slo.map((x, i) => [i, `требование «${x.label}»: первое слово ≤ ${x.ttft_p90} с, скорость ≥ ${ru(1 / x.tpot)} ток/с`]), deckState.slo, (v) => { deckState.slo = v; }, "требование");
   const wl = loads().find((w) => w.load === deckState.load) || loads()[0];
   const cv = wl.curve[ch], knee = cv.filter((r) => r.N <= wl.knee_pred).slice(-1)[0];
+  let row;
+  const formula = (parent, latex, legend) => parent.append(el("div", { class: "formula-block" }, el("div", { class: "math" }, `\\[${latex}\\]`), el("p", { class: "lede" }, legend)));
 
-  // 1. ITPS and OTPS by the number of clients.
-  s = section(`Сколько сервер обрабатывает за секунду: ${DECK_LABEL[wl.load]}`);
-  let row = chartRow(s);
-  const showN = [...new Set([1, 4, 16, knee.N, cv[cv.length - 1].N])].filter((n) => cv.some((r) => r.N === n)).sort((a, b) => a - b);
-  chart(row, () => {
-    const t = [];
-    let xm = 0, ym = 0;
-    showN.forEach((n, i) => {
-      const r = cv.find((x) => x.N === n), c = seqColor(i, showN.length), xi = 1 / r.a_tilde, yo = 1 / r.b_tilde;
-      t.push({ type: "scatter", mode: "lines+text", name: `${n} клиент(ов)${n === knee.N ? " — предел памяти" : ""}`, x: [xi, 0], y: [0, yo], text: ["", `N ${n}`], textposition: "middle right",
-        textfont: { size: 11, color: c }, line: { color: c, width: 2 }, hovertemplate: `N ${n}: только вход — %{x:,.0f}, только выход — %{y:,.0f} ток/с<extra></extra>` });
-      t.push({ type: "scatter", mode: "markers", showlegend: false, x: [r.itps_new], y: [r.otps], marker: { color: c, size: 14, symbol: "x-thin-open", line: { width: 3, color: c } }, hovertemplate: `N ${n} · прогноз: ITPS %{x:,.0f}, OTPS %{y:,.0f}<extra></extra>` });
-      const m = wl.points.find((p) => p.N === n);
-      if (m) t.push({ type: "scatter", mode: "markers", showlegend: false, x: [m.itps_new], y: [m.otps], marker: { color: c, size: 9, line: { width: 1, color: css("--bg") } }, hovertemplate: `N ${n} · замер: ITPS %{x:,.0f}, OTPS %{y:,.0f}<extra></extra>` });
-      xm = Math.max(xm, xi); ym = Math.max(ym, yo);
-    });
-    t.push({ type: "scatter", mode: "markers", name: "крест — прогноз, точка — замер", x: [null], y: [null], marker: { color: css("--muted"), size: 12, symbol: "x-thin-open", line: { width: 3, color: css("--muted") } } });
-    return [t, lay("ITPS, входных токенов в секунду", "OTPS, выходных токенов в секунду", {
-      xaxis: { ...baseLayout().xaxis, range: [0, xm * 1.05], title: { text: "ITPS, входных токенов в секунду" } }, yaxis: { ...baseLayout().yaxis, range: [0, ym * 1.1], title: { text: "OTPS, выходных токенов в секунду" } } })];
-  }, true);
-  const r1 = cv[0];
-  cap(s, `Линия при данном числе клиентов N — все сочетания входных (ITPS) и выходных (OTPS) токенов в секунду, которые GPU успевает обработать: на оси x — если бы запросы были только промптами, на оси y — только ответами. Крест — где окажется этот тип запросов (прогноз), точка — замер. С ростом N линия отходит от нуля: при 1 клиенте выход — до ${int(1 / r1.b_tilde)} ток/с, при ${knee.N} — до ${int(1 / knee.b_tilde)}. После предела памяти линия не двигается.`);
+  // Step 1: the step model.
+  s = section("Шаг 1. Модель: сколько длится шаг GPU",
+    "Сервер обрабатывает запросы шагами. Prefill-шаг считает промпты новых запросов, decode-шаг выдаёт по одному токену ответа всем запросам в работе. Модель предсказывает длительность шага по его составу; коэффициенты подобраны на замерах.");
+  let f = el("div", { class: "formulas" });
+  formula(f, "T_{\\mathrm{pf}} = a \\cdot L(1 - R) + b \\cdot L^2 (1 - R^2) + c", "Prefill: L — длина промпта, R — доля промпта из кэша, a, b, c — коэффициенты.");
+  formula(f, "T_{\\mathrm{dc}} = d_0 + d_1 \\cdot \\textstyle\\sum\\ell + d_2 \\cdot B", "Decode: B — запросов в шаге, Σℓ — сумма длин их контекстов, d0, d1, d2 — коэффициенты (шаг не короче порога F, повторы общего начала промпта в Σℓ — с весом κ).");
+  s.append(f);
 
   // 2. Prefill of one request: the model only, colour by the cached share.
   s = section("Сколько GPU обрабатывает промпт одного запроса");
@@ -1966,6 +1953,39 @@ function renderDeck() {
   }, true);
   cap(s, `Точки — замер, пунктир — модель: время обработки промпта одного запроса от его длины, цвет — какая доля промпта взята из кэша. Промпт в 1 тыс. токенов — сотые доли секунды, в 30 тыс. — несколько секунд; чем больше из кэша, тем быстрее. Ошибка модели против замера — ${pct0(Lc.prefill_grid.mean_abs_e)}.`);
 
+  // Step 2: from the step to the server.
+  s = section("Шаг 2. Технические метрики: что даёт сервер при N клиентах",
+    "N — сколько клиентов одновременно ждут ответа. Из длительности шагов и формы запросов модель считает, что получат сервер и клиент.");
+  f = el("div", { class: "formulas" });
+  formula(f, "B = \\min(N,\\ B_{\\mathrm{KV}}), \\qquad \\tau = T_{\\mathrm{pf}} + (O - 1)\\cdot \\frac{T_{\\mathrm{dc}}}{B}, \\qquad \\mathrm{RPS} = \\frac{1}{\\tau}",
+    "B — запросов в работе (не больше, чем вмещает память, B_KV; остальные ждут); τ — время GPU на запрос; O — длина ответа; RPS — запросов в секунду.");
+  formula(f, "\\mathrm{ITPS} = \\mathrm{RPS}\\cdot L(1 - R), \\qquad \\mathrm{OTPS} = \\mathrm{RPS}\\cdot O, \\qquad \\text{скорость клиента} = \\frac{1}{\\mathrm{TPOT}}, \\quad \\mathrm{TPOT} = \\frac{B}{\\mathrm{RPS}\\,(O - 1)}",
+    "ITPS и OTPS — входных и выходных токенов в секунду на сервер; скорость клиента — токенов в секунду одному клиенту. Ожидание первого токена — свой prefill плюс очередь (N − B)/RPS.");
+  s.append(f);
+
+  // 1. ITPS and OTPS by the number of clients.
+  s = section(`Сколько сервер обрабатывает за секунду: ${DECK_LABEL[wl.load]}`);
+  row = chartRow(s);
+  const showN = [...new Set([1, 4, 16, knee.N, cv[cv.length - 1].N])].filter((n) => cv.some((r) => r.N === n)).sort((a, b) => a - b);
+  chart(row, () => {
+    const t = [];
+    let xm = 0, ym = 0;
+    showN.forEach((n, i) => {
+      const r = cv.find((x) => x.N === n), c = seqColor(i, showN.length), xi = 1 / r.a_tilde, yo = 1 / r.b_tilde;
+      t.push({ type: "scatter", mode: "lines+text", name: `${n} клиент(ов)${n === knee.N ? " — предел памяти" : ""}`, x: [xi, 0], y: [0, yo], text: ["", `N ${n}`], textposition: "middle right",
+        textfont: { size: 11, color: c }, line: { color: c, width: 2 }, hovertemplate: `N ${n}: только вход — %{x:,.0f}, только выход — %{y:,.0f} ток/с<extra></extra>` });
+      t.push({ type: "scatter", mode: "markers", showlegend: false, x: [r.itps_new], y: [r.otps], marker: { color: c, size: 14, symbol: "x-thin-open", line: { width: 3, color: c } }, hovertemplate: `N ${n} · прогноз: ITPS %{x:,.0f}, OTPS %{y:,.0f}<extra></extra>` });
+      const m = wl.points.find((p) => p.N === n);
+      if (m) t.push({ type: "scatter", mode: "markers", showlegend: false, x: [m.itps_new], y: [m.otps], marker: { color: c, size: 9, line: { width: 1, color: css("--bg") } }, hovertemplate: `N ${n} · замер: ITPS %{x:,.0f}, OTPS %{y:,.0f}<extra></extra>` });
+      xm = Math.max(xm, xi); ym = Math.max(ym, yo);
+    });
+    t.push({ type: "scatter", mode: "markers", name: "крест — прогноз, точка — замер", x: [null], y: [null], marker: { color: css("--muted"), size: 12, symbol: "x-thin-open", line: { width: 3, color: css("--muted") } } });
+    return [t, lay("ITPS, входных токенов в секунду", "OTPS, выходных токенов в секунду", {
+      xaxis: { ...baseLayout().xaxis, range: [0, xm * 1.05], title: { text: "ITPS, входных токенов в секунду" } }, yaxis: { ...baseLayout().yaxis, range: [0, ym * 1.1], title: { text: "OTPS, выходных токенов в секунду" } } })];
+  }, true);
+  const r1 = cv[0];
+  cap(s, `Линия при данном числе клиентов N — все сочетания входных (ITPS) и выходных (OTPS) токенов в секунду, которые GPU успевает обработать: на оси x — если бы запросы были только промптами, на оси y — только ответами. Крест — где окажется этот тип запросов (прогноз), точка — замер. С ростом N линия отходит от нуля: при 1 клиенте выход — до ${int(1 / r1.b_tilde)} ток/с, при ${knee.N} — до ${int(1 / knee.b_tilde)}. После предела памяти линия не двигается.`);
+
   // 3. Client speed against the input load of the server.
   s = section("Скорость для клиента против нагрузки на сервер");
   row = chartRow(s);
@@ -1988,6 +2008,11 @@ function renderDeck() {
   }, true);
   const n1 = cv[0], n8 = cv.find((r) => r.N === 8) || cv[0];
   cap(s, `Каждая линия идёт слева направо по числу клиентов: чем больше клиентов, тем больше нагрузка на сервер (ITPS) и тем медленнее ответ каждому. Для «${DECK_LABEL[wl.load]}»: 1 клиент — ${int(n1.itps_new)} входных токенов в секунду и ${int(n1.ttps)} ток/с клиенту, 8 клиентов — ${int(n8.itps_new)} и ${int(n8.ttps)}. После предела памяти линия упирается в точку: новые клиенты только ждут в очереди. Пунктиры — пороги скорости в требованиях: выше пунктира требование выполнено. Точки — замер.`);
+
+  // Step 3: money.
+  s = section("Шаг 3. Деньги: выручка, прибыль, окупаемость",
+    "Технические метрики шага 2 переводим в деньги. Требование к качеству ограничивает число клиентов: берётся наибольшее N, при котором ожидание первого токена и скорость для клиента укладываются в требование.");
+  econSteps(s);
 
   // 3. Payback by the number of requests in parallel.
   s = section(`Окупаемость своей карты по числу параллельных запросов: ${DECK_LABEL[wl.load]}`);
@@ -2033,34 +2058,6 @@ function renderDeck() {
   }));
   cap(s, `Цены входа и кэша — в той же пропорции к выходу, что у Qwen3-8B (вход = выход × ${ru(rIn, 2)}). Чем быстрее нужно отвечать клиенту, тем меньше клиентов держит сервер и тем дороже приходится продавать токены. Линия ниже пунктира — рыночной цены хватает, чтобы окупиться в этот срок.`);
 
-  // 5. Cost per 1M output tokens.
-  s = section(`Себестоимость 1 млн выходных токенов: ${DECK_LABEL[wl.load]}`);
-  row = chartRow(s);
-  big(chart(row, () => {
-    const x = cv.map((r) => r.ttps), perM = (cost) => cv.map((r) => (cost * 1e6) / (3600 * r.otps));
-    const amort = G.price / (24 * 365 * G.lifetime_years);
-    const lines = [
-      ["аренда карты", perM(G.rent_per_hour), "--c5", "solid"],
-      [`своя карта: электричество + цена карты за ${G.lifetime_years} года`, perM(Cel + amort), "--c1", "solid"],
-      ["своя карта: только электричество", perM(Cel), "--c3", "solid"],
-      ["выручка на 1 млн выходных (с оплатой входа)", cv.map((r) => (money(r) * 1e6) / (3600 * r.otps)), "--fg", "dash"],
-    ];
-    const ymax = Math.max(...lines.flatMap((l) => l[1]));
-    return [lines.map(([name, y, cc, dash]) => ({ type: "scatter", mode: "lines+markers", name, x, y, line: { color: css(cc), width: 2.5, dash }, marker: { size: 5, color: css(cc) },
-      customdata: cv.map((r) => r.N), hovertemplate: `${name}<br>клиентов %{customdata}: $%{y:.3f} за 1 млн<extra></extra>` })),
-      lay("скорость для клиента, токенов/с", "$ за 1 млн выходных токенов", { xaxis: { ...baseLayout().xaxis, range: [15, 90], title: { text: "скорость для клиента, токенов/с" } }, yaxis: { ...baseLayout().yaxis, range: [0, ymax * 1.05], tickformat: ".2f", title: { text: "$ за 1 млн выходных токенов" } } })];
-  }));
-  cap(s, "Вся стоимость часа поделена на выходные токены этого часа. Где линия затрат ниже пунктира выручки — сервер в плюсе. Быстрые ответы дороже: при малом числе клиентов GPU простаивает, и та же стоимость часа делится на меньшее число токенов.");
-
-  // 6. Rent or own card.
-  s = section(`Арендовать карту или купить свою (требование «${slo.label}»)`);
-  row = chartRow(s);
-  const rows = econRows(slo.label).filter((r) => r.N != null && r.cache === deckState.cache);
-  chart(row, () => [[
-    { type: "bar", name: "прибыль при аренде", x: rows.map((r) => DECK_LABEL[r.load]), y: rows.map((r) => r.profit_rent), marker: { color: css("--c5") }, hovertemplate: "%{x}<br>аренда: $%{y:.3f}/ч<extra></extra>" },
-    { type: "bar", name: "прибыль со своей картой", x: rows.map((r) => DECK_LABEL[r.load]), y: rows.map((r) => r.profit_own), marker: { color: css("--c3") }, hovertemplate: "%{x}<br>своя: $%{y:.3f}/ч<extra></extra>" },
-  ], lay("", "прибыль, $ в час", { barmode: "group", xaxis: { ...baseLayout().xaxis, tickfont: { size: 10, color: css("--muted") } } })], true);
-  cap(s, `Аренда стоит $${G.rent_per_hour} в час, своя карта — только электричество ($${ru(Cel, 3)} в час) плюс покупка. При нынешних ценах токенов аренда окупается не для всех типов запросов, своя карта — для всех.`);
   // 8. Price by client speed and by the number of requests in parallel.
   s = section(`Цена за 1 млн выходных токенов от скорости и числа параллельных запросов: ${DECK_LABEL[wl.load]}`);
   row = chartRow(s);
@@ -2094,6 +2091,44 @@ function renderDeck() {
   }), 600);
   const p12 = (n) => { const r = cv.find((x) => x.N === n); return (G.price / (24 * 30.4 * 12) + Cel) * 1e6 / (3600 * (rIn * r.itps_new + rC * (r.itps_full - r.itps_new) + r.otps)); };
   cap(s, `Нижняя шкала — скорость для клиента, верхняя — сколько запросов сервер обрабатывает параллельно при этой скорости: одна и та же точка читается по обеим. Цены на линии «12 мес.» подписаны у отметок: 1 запрос параллельно — $${ru(p12(1), 3)}, 8 — $${ru(p12(8) || 0, 3)}, ${knee.N} (предел памяти) — $${ru(p12(knee.N), 3)} за 1 млн. Чем больше запросов идёт параллельно, тем ниже нужная цена, но тем медленнее ответ каждому клиенту. Пунктир — рыночная цена.`);
+
+  // 5. Cost per 1M output tokens.
+  s = section(`Себестоимость 1 млн выходных токенов: ${DECK_LABEL[wl.load]}`);
+  row = chartRow(s);
+  big(chart(row, () => {
+    const x = cv.map((r) => r.ttps), perM = (cost) => cv.map((r) => (cost * 1e6) / (3600 * r.otps));
+    const amort = G.price / (24 * 365 * G.lifetime_years);
+    const lines = [
+      ["аренда карты", perM(G.rent_per_hour), "--c5", "solid"],
+      [`своя карта: электричество + цена карты за ${G.lifetime_years} года`, perM(Cel + amort), "--c1", "solid"],
+      ["своя карта: только электричество", perM(Cel), "--c3", "solid"],
+      ["выручка на 1 млн выходных (с оплатой входа)", cv.map((r) => (money(r) * 1e6) / (3600 * r.otps)), "--fg", "dash"],
+    ];
+    const ymax = Math.max(...lines.flatMap((l) => l[1]));
+    return [lines.map(([name, y, cc, dash]) => ({ type: "scatter", mode: "lines+markers", name, x, y, line: { color: css(cc), width: 2.5, dash }, marker: { size: 5, color: css(cc) },
+      customdata: cv.map((r) => r.N), hovertemplate: `${name}<br>клиентов %{customdata}: $%{y:.3f} за 1 млн<extra></extra>` })),
+      lay("скорость для клиента, токенов/с", "$ за 1 млн выходных токенов", { xaxis: { ...baseLayout().xaxis, range: [15, 90], title: { text: "скорость для клиента, токенов/с" } }, yaxis: { ...baseLayout().yaxis, range: [0, ymax * 1.05], tickformat: ".2f", title: { text: "$ за 1 млн выходных токенов" } } })];
+  }));
+  cap(s, "Вся стоимость часа поделена на выходные токены этого часа. Где линия затрат ниже пунктира выручки — сервер в плюсе. Быстрые ответы дороже: при малом числе клиентов GPU простаивает, и та же стоимость часа делится на меньшее число токенов.");
+
+  // 6. Rent or own card.
+  s = section(`Арендовать карту или купить свою (требование «${slo.label}»)`);
+  row = chartRow(s);
+  const rows = econRows(slo.label).filter((r) => r.N != null && r.cache === deckState.cache);
+  chart(row, () => [[
+    { type: "bar", name: "прибыль при аренде", x: rows.map((r) => DECK_LABEL[r.load]), y: rows.map((r) => r.profit_rent), marker: { color: css("--c5") }, hovertemplate: "%{x}<br>аренда: $%{y:.3f}/ч<extra></extra>" },
+    { type: "bar", name: "прибыль со своей картой", x: rows.map((r) => DECK_LABEL[r.load]), y: rows.map((r) => r.profit_own), marker: { color: css("--c3") }, hovertemplate: "%{x}<br>своя: $%{y:.3f}/ч<extra></extra>" },
+  ], lay("", "прибыль, $ в час", { barmode: "group", xaxis: { ...baseLayout().xaxis, tickfont: { size: 10, color: css("--muted") } } })], true);
+  cap(s, `Аренда стоит $${G.rent_per_hour} в час, своя карта — только электричество ($${ru(Cel, 3)} в час) плюс покупка. При нынешних ценах токенов аренда окупается не для всех типов запросов, своя карта — для всех.`);
+
+  // Accuracy.
+  const acc = Object.fromEntries(S.summary.filter((r) => r.variant === ch && r.load === "все").map((r) => [r.region, r]));
+  s = section("Насколько точна модель", `Прогноз сравнён с замером на ${acc.below.points + acc.above.points} точках, по которым модель не подбиралась.`);
+  table(s, [["запросов в секунду", "rps"], ["выходных токенов в секунду", "otps"], ["ожидание первого токена, 90%", "ttft_p90"], ["время между токенами", "tpot"]].map(([n, k]) => ({ n, below: acc.below[`${k}_abs`], above: acc.above[`${k}_abs`] })), [
+    { label: "что прогнозируем", key: "n", text: true },
+    { label: "пока память не заполнена", key: "below", fmt: (v) => `±${pct0(v)}` },
+    { label: "после предела памяти", key: "above", fmt: (v) => `±${pct0(v)}` },
+  ]);
 }
 
 const DECK_PRICE_NOTE = (E) => `как у Qwen3-8B × 0,6/8 (выход $${ru(E.prices.output, 3)} за 1 млн)`;
