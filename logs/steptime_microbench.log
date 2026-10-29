@@ -1,0 +1,424 @@
+INFO     | experiment=steptime_microbench status=started
+Fetching 1 files:   0%|          | 0/1 [00:00<?, ?it/s]Fetching 1 files: 100%|██████████| 1/1 [00:00<00:00, 96.37it/s]
+INFO     | model main shapes {'qkv_proj': (4096, 2048), 'o_proj': (2048, 2048), 
+'gate_up_proj': (12288, 2048), 'down_proj': (2048, 6144), 'lm_head': (151936, 
+2048)}
+USDT:2026-10-25 18:42:07 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:07 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:07 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:08 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:08 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:08 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:08 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:08 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:08 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:08 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:08 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:08 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:08 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:09 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:09 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:09 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:09 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:09 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:09 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:09 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:10 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:10 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:10 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:10 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:10 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:10 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:11 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:11 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:11 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:11 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:11 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:11 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:12 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:12 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:12 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:12 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:13 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:13 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:13 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:13 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:14 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:14 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:14 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:15 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:15 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:15 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:16 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:16 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:16 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:16 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:16 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:17 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:17 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:18 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:18 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:18 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:18 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:19 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:19 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:20 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:20 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:20 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:20 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:21 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:21 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:21 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:21 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:21 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:21 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:21 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:21 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:21 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:21 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:21 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:21 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:21 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:22 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:22 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:22 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:22 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:22 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:22 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:22 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:22 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:22 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:23 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:23 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:23 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:23 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:23 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:23 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:24 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:24 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:24 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:24 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:24 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:24 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:24 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:25 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:25 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:25 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:25 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:25 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:25 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:25 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:26 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:26 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:26 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:26 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:26 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:26 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:26 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:26 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:27 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:27 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:27 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:28 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:28 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:28 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:28 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:29 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:29 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:29 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:29 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:30 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:30 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:30 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:30 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:30 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:30 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:30 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:31 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:31 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:31 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:31 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:31 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:31 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:31 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:31 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:32 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:32 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:32 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:33 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:33 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:33 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:33 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:34 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:34 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:34 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:35 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:35 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:35 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:36 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:36 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:37 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:37 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:37 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:38 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:38 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:39 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:39 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:40 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:40 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:41 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:41 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:42 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:42 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:43 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:43 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:44 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:45 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:46 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:46 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:47 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:48 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:49 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:49 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:50 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:50 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:52 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:52 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:53 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:53 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:55 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:55 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:56 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:57 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:42:58 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:42:58 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:00 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:00 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:02 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:02 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:03 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:03 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:03 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:03 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:03 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:03 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:03 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:03 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:03 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:04 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:04 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:04 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:04 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:04 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:05 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:05 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:05 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:05 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:05 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:05 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:06 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:06 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:06 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:06 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:06 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:06 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:07 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:07 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:07 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:08 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:08 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:08 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:08 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:09 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:09 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:09 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:10 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:10 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:10 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:10 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:11 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:11 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:12 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:12 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:12 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:12 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:13 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:13 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:14 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:14 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:15 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:15 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:16 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:16 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:16 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:17 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:17 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:18 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:18 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:18 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:19 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:20 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:20 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:20 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:21 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:21 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:22 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:22 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-10-25 18:43:24 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:24 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:43:25.255724726 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 257949696 bytes (free: 157745152, total: 16749428736).
+USDT:2026-10-25 18:43:27 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:28 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:43:28.603275162 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 364904448 bytes (free: 34013184, total: 16749428736).
+USDT:2026-10-25 18:43:31 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:31 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:43:31.844133587 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 446693376 bytes (free: 78053376, total: 16749428736).
+USDT:2026-10-25 18:43:36 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:36 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:43:36.422994690 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 515899392 bytes (free: 15138816, total: 16749428736).
+USDT:2026-10-25 18:43:41 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:41 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:43:41.325381323 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 576716800 bytes (free: 50790400, total: 16749428736).
+USDT:2026-10-25 18:43:46 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:46 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:43:46.734121099 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 631242752 bytes (free: 187105280, total: 16749428736).
+[W1025 18:43:47.876124589 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 681574400 bytes (free: 134676480, total: 16749428736).
+USDT:2026-10-25 18:43:52 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:43:52 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:43:52.921724125 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 727711744 bytes (free: 384237568, total: 16749428736).
+[W1025 18:43:55.495380523 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 771751936 bytes (free: 140967936, total: 16749428736).
+USDT:2026-10-25 18:43:59 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:44:00 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:44:00.366756898 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 813694976 bytes (free: 29818880, total: 16749428736).
+[W1025 18:44:04.182622897 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 853540864 bytes (free: 44498944, total: 16749428736).
+USDT:2026-10-25 18:44:08 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:44:08 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:44:08.499887383 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 891289600 bytes (free: 178716672, total: 16749428736).
+[W1025 18:44:12.402318074 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 926941184 bytes (free: 426180608, total: 16749428736).
+USDT:2026-10-25 18:44:16 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:44:16 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:44:16.764062736 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 960495616 bytes (free: 780599296, total: 16749428736).
+[W1025 18:44:19.115647766 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 994050048 bytes (free: 243728384, total: 16749428736).
+USDT:2026-10-25 18:44:25 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:44:26 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:44:26.254978840 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1025507328 bytes (free: 732364800, total: 16749428736).
+[W1025 18:44:27.077735020 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1056964608 bytes (free: 260505600, total: 16749428736).
+[W1025 18:44:32.245922815 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1086324736 bytes (free: 874971136, total: 16749428736).
+USDT:2026-10-25 18:44:36 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:44:36 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:44:36.482901251 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1115684864 bytes (free: 463929344, total: 16749428736).
+[W1025 18:44:40.271673051 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1145044992 bytes (free: 52887552, total: 16749428736).
+USDT:2026-10-25 18:44:47 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:44:47 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:44:47.789589976 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1172307968 bytes (free: 814153728, total: 16749428736).
+[W1025 18:44:48.936559485 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1199570944 bytes (free: 459735040, total: 16749428736).
+[W1025 18:44:52.795790946 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1226833920 bytes (free: 105316352, total: 16749428736).
+USDT:2026-10-25 18:44:59 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:44:59 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:44:59.445187888 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1251999744 bytes (free: 1002897408, total: 16749428736).
+[W1025 18:45:00.728544599 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1277165568 bytes (free: 700907520, total: 16749428736).
+[W1025 18:45:04.565739093 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1302331392 bytes (free: 398917632, total: 16749428736).
+USDT:2026-10-25 18:45:11 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:45:11 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:45:11.675632354 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1327497216 bytes (free: 96927744, total: 16749428736).
+[W1025 18:45:12.842364849 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1350565888 bytes (free: 1145503744, total: 16749428736).
+[W1025 18:45:16.293597075 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1373634560 bytes (free: 891748352, total: 16749428736).
+[W1025 18:45:20.294204129 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1396703232 bytes (free: 637992960, total: 16749428736).
+USDT:2026-10-25 18:45:24 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:45:25 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:45:25.581866208 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1419771904 bytes (free: 384237568, total: 16749428736).
+[W1025 18:45:28.562297051 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1442840576 bytes (free: 130482176, total: 16749428736).
+[W1025 18:45:32.575817128 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1463812096 bytes (free: 1340538880, total: 16749428736).
+USDT:2026-10-25 18:45:38 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:45:38 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:45:38.859808302 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1484783616 bytes (free: 1130823680, total: 16749428736).
+[W1025 18:45:40.452586471 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1505755136 bytes (free: 921108480, total: 16749428736).
+[W1025 18:45:44.236120681 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1526726656 bytes (free: 711393280, total: 16749428736).
+[W1025 18:45:48.194424424 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1547698176 bytes (free: 501678080, total: 16749428736).
+USDT:2026-10-25 18:45:53 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:45:53 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:45:53.717136809 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1568669696 bytes (free: 291962880, total: 16749428736).
+[W1025 18:45:56.263329297 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1589641216 bytes (free: 82247680, total: 16749428736).
+[W1025 18:46:00.362049178 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1608515584 bytes (free: 1481048064, total: 16749428736).
+[W1025 18:46:03.866254669 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1627389952 bytes (free: 1311178752, total: 16749428736).
+USDT:2026-10-25 18:46:08 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:46:09 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:46:09.272264604 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1646264320 bytes (free: 1141309440, total: 16749428736).
+[W1025 18:46:11.681647535 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1665138688 bytes (free: 971440128, total: 16749428736).
+[W1025 18:46:15.636705344 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1684013056 bytes (free: 801570816, total: 16749428736).
+[W1025 18:46:19.502946659 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1702887424 bytes (free: 631701504, total: 16749428736).
+USDT:2026-10-25 18:46:24 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:46:25 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:46:25.503509441 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1721761792 bytes (free: 461832192, total: 16749428736).
+[W1025 18:46:27.610894819 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1740636160 bytes (free: 291962880, total: 16749428736).
+[W1025 18:46:31.599480800 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1759510528 bytes (free: 122093568, total: 16749428736).
+[W1025 18:46:35.636813140 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1776287744 bytes (free: 1728512000, total: 16749428736).
+USDT:2026-10-25 18:46:41 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:46:42 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:46:42.424914085 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1793064960 bytes (free: 1594294272, total: 16749428736).
+[W1025 18:46:43.176806896 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1809842176 bytes (free: 1460076544, total: 16749428736).
+[W1025 18:46:46.926283926 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1826619392 bytes (free: 1325858816, total: 16749428736).
+[W1025 18:46:50.668260789 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1843396608 bytes (free: 1191641088, total: 16749428736).
+[W1025 18:46:54.357914722 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1860173824 bytes (free: 1057423360, total: 16749428736).
+USDT:2026-10-25 18:46:59 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:47:00 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:47:00.308216716 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1876951040 bytes (free: 923205632, total: 16749428736).
+[W1025 18:47:02.511067689 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1893728256 bytes (free: 788987904, total: 16749428736).
+[W1025 18:47:06.432273743 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1910505472 bytes (free: 654770176, total: 16749428736).
+[W1025 18:47:10.430928009 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1927282688 bytes (free: 520552448, total: 16749428736).
+[W1025 18:47:14.441056415 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1944059904 bytes (free: 386334720, total: 16749428736).
+USDT:2026-10-25 18:47:18 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:47:19 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:47:19.517510456 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1960837120 bytes (free: 252116992, total: 16749428736).
+[W1025 18:47:22.056947599 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1977614336 bytes (free: 117899264, total: 16749428736).
+[W1025 18:47:26.096780529 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 1992294400 bytes (free: 1975975936, total: 16749428736).
+[W1025 18:47:30.754053524 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2006974464 bytes (free: 1873215488, total: 16749428736).
+[W1025 18:47:34.369103014 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2021654528 bytes (free: 1770455040, total: 16749428736).
+USDT:2026-10-25 18:47:38 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:47:38 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:47:38.611330407 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2036334592 bytes (free: 1667694592, total: 16749428736).
+[W1025 18:47:41.762847502 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2051014656 bytes (free: 1564934144, total: 16749428736).
+[W1025 18:47:45.565030824 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2065694720 bytes (free: 1462173696, total: 16749428736).
+[W1025 18:47:49.479088606 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2080374784 bytes (free: 1359413248, total: 16749428736).
+[W1025 18:47:52.929592711 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2095054848 bytes (free: 1256652800, total: 16749428736).
+USDT:2026-10-25 18:47:57 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:47:58 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:47:58.394279937 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2109734912 bytes (free: 1153892352, total: 16749428736).
+[W1025 18:48:00.701185986 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2124414976 bytes (free: 1051131904, total: 16749428736).
+[W1025 18:48:04.431297622 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2139095040 bytes (free: 948371456, total: 16749428736).
+[W1025 18:48:08.303203454 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2153775104 bytes (free: 845611008, total: 16749428736).
+[W1025 18:48:11.037350246 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2168455168 bytes (free: 742850560, total: 16749428736).
+USDT:2026-10-25 18:48:18 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:48:18 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:48:18.958714911 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2183135232 bytes (free: 640090112, total: 16749428736).
+[W1025 18:48:20.307605453 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2197815296 bytes (free: 537329664, total: 16749428736).
+[W1025 18:48:24.235548644 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2212495360 bytes (free: 434569216, total: 16749428736).
+[W1025 18:48:28.183580741 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2227175424 bytes (free: 331808768, total: 16749428736).
+[W1025 18:48:32.356707347 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2241855488 bytes (free: 229048320, total: 16749428736).
+[W1025 18:48:36.151251818 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2256535552 bytes (free: 126287872, total: 16749428736).
+USDT:2026-10-25 18:48:40 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:48:40 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:48:40.117716770 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2271215616 bytes (free: 23527424, total: 16749428736).
+[W1025 18:48:44.121297972 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2283798528 bytes (free: 2204565504, total: 16749428736).
+[W1025 18:48:48.792869797 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2296381440 bytes (free: 2129068032, total: 16749428736).
+[W1025 18:48:52.581617060 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2308964352 bytes (free: 2053570560, total: 16749428736).
+[W1025 18:48:56.158438737 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2321547264 bytes (free: 1978073088, total: 16749428736).
+[W1025 18:48:59.834204409 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2334130176 bytes (free: 1902575616, total: 16749428736).
+USDT:2026-10-25 18:49:03 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:49:04 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:49:04.514533485 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2346713088 bytes (free: 1827078144, total: 16749428736).
+[W1025 18:49:07.125961862 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2359296000 bytes (free: 1751580672, total: 16749428736).
+[W1025 18:49:11.447290950 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2371878912 bytes (free: 1676083200, total: 16749428736).
+[W1025 18:49:15.322624949 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2384461824 bytes (free: 1600585728, total: 16749428736).
+[W1025 18:49:19.139306704 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2397044736 bytes (free: 1525088256, total: 16749428736).
+[W1025 18:49:22.898450694 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2409627648 bytes (free: 1449590784, total: 16749428736).
+USDT:2026-10-25 18:49:27 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+USDT:2026-10-25 18:49:27 1975861:1975861 SyncActivityProfilerHandler.cpp:52] profiler_start
+[W1025 18:49:27.726575685 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2422210560 bytes (free: 1374093312, total: 16749428736).
+[W1025 18:49:30.809735860 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2434793472 bytes (free: 1298595840, total: 16749428736).
+[W1025 18:49:33.119276879 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2447376384 bytes (free: 1223098368, total: 16749428736).
+[W1025 18:49:37.133611654 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2459959296 bytes (free: 1147600896, total: 16749428736).
+[W1025 18:49:41.484461325 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2472542208 bytes (free: 1072103424, total: 16749428736).
+[W1025 18:49:45.250743687 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 2485125120 bytes (free: 996605952, total: 16749428736).
+USDT:2026-10-25 18:49:50 1975861:1975861 SyncActivityProfilerHandler.cpp:59] profiler_stop
+INFO     | main kernel map rows=40960 distinct kernels=32

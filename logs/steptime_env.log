@@ -1,0 +1,66 @@
+INFO     | experiment=steptime_env status=started
+INFO     | vllm probe main: {'model': 'Qwen/Qwen3-1.7B', 'revision': 
+'70d244cc86ccca08cf5af4e1e306ecf908b1ad5e', 'load_s': 263.9475534299854, 
+'num_gpu_blocks': 1755, 'block_size': 16, 'kv_cache_tokens': 28080, 
+'max_model_len': 8192, 'dtype': 'torch.bfloat16', 'gpu_memory_utilization': 
+0.92, 'max_num_batched_tokens': 8192, 'max_num_seqs': 256, 
+'enable_chunked_prefill': True, 'enable_prefix_caching': True, 
+'async_scheduling': True, 'scheduler_cls': 'AsyncScheduler', 'cudagraph_mode': 
+'FULL_AND_PIECEWISE', 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 
+48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 
+184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 
+368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'max_cudagraph_capture_size':
+512, 'compilation_mode': '3', 'splitting_ops': 
+['vllm::unified_attention_with_output', 
+'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 
+'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::qwen4_exp_ple_short_conv', 
+'vllm::qwen4_exp_qsa_with_output', 'vllm::qwen4_exp_qsa_prepare_with_output', 
+'vllm::linear_attention', 'vllm::qwen_gdn_attention_core', 
+'vllm::qwen_gdn_attention_core_fused_norm_packed', 
+'vllm::gdn_attention_core_xpu', 'vllm::olmo_hybrid_gdn_full_forward', 
+'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 
+'vllm::deepseek_v4_attention', 'vllm::hpc_rope_norm_forward', 
+'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 
+'attention_backends': ['FLASH_ATTN'], 'uniform_decode_query_len': 1, 
+'sample_output_tokens': 16}
+INFO     | vllm probe transfer: {'model': 'Qwen/Qwen2.5-1.5B-Instruct', 
+'revision': '989aa7980e4cf806f80c7fef2b1adb7bc71aa306', 'load_s': 
+81.20968179102056, 'num_gpu_blocks': 7021, 'block_size': 16, 'kv_cache_tokens': 
+112336, 'max_model_len': 8192, 'dtype': 'torch.bfloat16', 
+'gpu_memory_utilization': 0.92, 'max_num_batched_tokens': 8192, 'max_num_seqs': 
+256, 'enable_chunked_prefill': True, 'enable_prefix_caching': True, 
+'async_scheduling': True, 'scheduler_cls': 'AsyncScheduler', 'cudagraph_mode': 
+'FULL_AND_PIECEWISE', 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 
+48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 
+184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 
+368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'max_cudagraph_capture_size':
+512, 'compilation_mode': '3', 'splitting_ops': 
+['vllm::unified_attention_with_output', 
+'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 
+'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::qwen4_exp_ple_short_conv', 
+'vllm::qwen4_exp_qsa_with_output', 'vllm::qwen4_exp_qsa_prepare_with_output', 
+'vllm::linear_attention', 'vllm::qwen_gdn_attention_core', 
+'vllm::qwen_gdn_attention_core_fused_norm_packed', 
+'vllm::gdn_attention_core_xpu', 'vllm::olmo_hybrid_gdn_full_forward', 
+'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 
+'vllm::deepseek_v4_attention', 'vllm::hpc_rope_norm_forward', 
+'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 
+'attention_backends': ['FLASH_ATTN'], 'uniform_decode_query_len': 1, 
+'sample_output_tokens': 16}
+INFO     | nvml before warm-up: {'driver': '610.57.04', 'cuda_driver_version': 
+13030, 'sm_clock_mhz': 1410, 'mem_clock_mhz': 7001, 'max_sm_clock_mhz': 2100, 
+'temperature_c': 31, 'power_w': 25.445, 'power_limit_w': 140.0, 'memory_used': 
+426180608, 'display_active': False, 'processes': [], 'applications_clock_mhz': 
+1560}
+INFO     | peak gemm 62.8 TFLOP/s (82% of passport 76.7), copy 390.0 GB/s (87% 
+of 448.1)
+INFO     | nsys smoke: {'returncode': 0, 'stderr_tail': '', 'kernels': 18, 
+'kernels_in_graph': 9, 'nvtx_events': 1, 'has_graph_trace_table': False}
+INFO     | metric peak_gemm_tflops=62.845209103290266
+INFO     | metric peak_copy_gbs=389.95016933866276
+INFO     | metric passport_tflops=76.67712
+INFO     | metric passport_gbs=448.064
+INFO     | metric kv_tokens_main=28080
+INFO     | metric kv_tokens_transfer=112336
+INFO     | metric nsys_kernels=18
+INFO     | experiment=steptime_env status=finished
