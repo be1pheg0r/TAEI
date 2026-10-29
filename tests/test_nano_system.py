@@ -93,13 +93,23 @@ def test_budget_point_lies_on_the_line_and_on_the_ray():
     assert p["a_tilde"] * x + p["b_tilde"] * y == pytest.approx(1)
 
 
-def test_economics_revenue_payback_and_slo():
-    prices = {"input": 0.1, "cached_input": 0.05, "output": 0.2}
-    gpu = {"price": 600.0, "cost_per_hour": 0.1}
-    r = economics.point(prices, gpu, 1000.0, 500.0, 100.0)
-    assert r["revenue_per_hour"] == pytest.approx(3600 * (100 + 25 + 20) / 1e6)
-    assert r["payback_hours"] == pytest.approx(600 / (0.522 - 0.1))
-    assert economics.point(prices, gpu, 0, 0, 0)["payback_hours"] is None
+def test_economics_steps_check_hour_and_payback():
+    prices = economics.scaled_prices(
+        {"input": 0.05, "cached_input": 0.05, "output": 0.2}, 0.6 / 8
+    )
+    assert prices["output"] == pytest.approx(0.015)
+    v = economics.check(prices, 1000.0, 500.0, 100.0)
+    assert v == pytest.approx((0.00375 * 1500 + 0.015 * 100) / 1e6)
+    gpu = {"price": 600.0, "rent_per_hour": 0.1, "power_kw": 0.2, "tariff_per_kwh": 0.2}
+    tokens = {"new": 1000.0, "cached": 500.0, "out": 100.0}
+    r = economics.hour(prices, gpu, tokens, tau=0.5, u=0.5)
+    assert r["Q"] == pytest.approx(3600)
+    assert r["rev"] == pytest.approx(v * 3600)
+    assert r["profit_rent"] == pytest.approx(r["rev"] - 0.1)
+    assert r["profit_own"] == pytest.approx(r["rev"] - 0.04)
+    assert r["payback_days"] is None  # 0.026 $/h does not cover 0.04 $/h of power
+    rich = economics.hour({k: 100 * x for k, x in prices.items()}, gpu, tokens, 0.5)
+    assert rich["payback_days"] == pytest.approx(600 / (24 * (rich["rev"] - 0.04)))
     rows = [
         {"N": 1, "ttft_p90": 0.1, "tpot": 0.01},
         {"N": 4, "ttft_p90": 0.4, "tpot": 0.02},

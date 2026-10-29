@@ -473,48 +473,34 @@ def _special(workloads: list[dict], variants: list[str]) -> dict:
 
 
 def _economics(workloads: list[dict], choice: str, econ: dict) -> dict:
-    gpu = econ["gpu"]
-    rows, slo_rows = [], []
+    """Steps of the economics per dynamic workload and SLO, by the prediction:
+    N — the largest meeting the SLO, τ = 1/RPS there, then v, Q, Rev, profit."""
+    prices = economics.scaled_prices(econ["prices"]["base"], econ["prices"]["scale"])
+    gpu, u = econ["gpu"], float(econ.get("utilization", 1.0))
+    rows = []
     for w in workloads:
-        for prices in econ["prices"]:
-
-            def money(r, prices=prices):
-                return economics.point(
-                    prices, gpu, r["itps_new"], r["itps_cache"], r["otps"]
-                )
-
-            top_meas = max(w["points"], key=lambda p: p["rps"])
-            top_pred = max(w["curve"][choice], key=lambda r: r["rps"])
-            rows.append(
-                {
-                    "label": w["label"],
-                    "prices": prices["label"],
-                    "N_pred": top_pred["N"],
-                    **{f"pred_{k}": v for k, v in money(top_pred).items()},
-                    "N_meas": top_meas["N"],
-                    **{f"meas_{k}": v for k, v in money(top_meas).items()},
-                }
-            )
-            for slo in econ["slo"]:
-                p = economics.max_n_under_slo(w["curve"][choice], slo)
-                m = economics.max_n_under_slo(w["points"], slo)
-                slo_rows.append(
-                    {
-                        "label": w["label"],
-                        "prices": prices["label"],
-                        "slo": slo["label"],
-                        "N_pred": p["N"] if p else None,
-                        "revenue_pred": money(p)["revenue_per_hour"] if p else None,
-                        "profit_pred": money(p)["profit_per_hour"] if p else None,
-                        "N_meas": m["N"] if m else None,
-                        "revenue_meas": money(m)["revenue_per_hour"] if m else None,
-                        "profit_meas": money(m)["profit_per_hour"] if m else None,
-                    }
-                )
+        if w["scheduler"] != "upstream_dynamic":
+            continue
+        pool = w["pool"]
+        tokens = {
+            "new": pool["new_mean"],
+            "cached": pool["L_mean"] - pool["new_mean"],
+            "out": pool["O_mean"],
+        }
+        for slo in econ["slo"]:
+            p = economics.max_n_under_slo(w["curve"][choice], slo)
+            row = {"load": w["load"], "cache": w["cache"], "label": w["label"]}
+            row |= {"slo": slo["label"], "N": p["N"] if p else None}
+            if p:
+                row |= economics.hour(prices, gpu, tokens, 1 / p["rps"], u)
+            rows.append(row)
     return {
-        "prices": econ["prices"],
+        "prices": prices,
+        "base": econ["prices"]["base"],
+        "scale": econ["prices"]["scale"],
         "gpu": gpu,
+        "electricity_per_hour": economics.electricity_per_hour(gpu),
+        "utilization": u,
         "slo": econ["slo"],
         "rows": rows,
-        "slo_rows": slo_rows,
     }

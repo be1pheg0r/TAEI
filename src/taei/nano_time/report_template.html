@@ -1222,39 +1222,146 @@ function renderWorkload(parent, w, kind) {
   parent.append(el("p", { class: "lede" }, "В таблице: замер / прогноз."));
 }
 
+// Economics of one GPU, step by step (the system block of the local model).
+const ECON_NAME = { S5: "Чат", W4: "Чат с системным промптом", W1: "Шаблон", W2: "Генерация", W3: "Документы" };
+const ECON_ORDER = ["S5", "W4", "W1", "W2", "W3"];
+const ECON_COLOR = { S5: "--c1", W4: "--c2", W1: "--c3", W2: "--c4", W3: "--c5" };
+const econRu = (v, d = 0) => (v == null ? "—" : v.toLocaleString("ru-RU", { maximumFractionDigits: d, minimumFractionDigits: d }));
+
+function econSteps(parent) {
+  const E = D.local.system.economics;
+  parent.append(el("h3", {}, "Экономика: шаги расчёта"));
+  const forms = el("div", { class: "formulas" });
+  const step = (title, latex, text) => forms.append(el("div", { class: "formula-block" }, el("h3", {}, title), text ? el("p", {}, text) : null, ...latex.map((eq) => el("div", { class: "math" }, `\\[${eq}\\]`))));
+  step("0. Цены для 0.6B", ["p_{\\mathrm{in}} = p_{\\mathrm{in}}^{\\mathrm{8B}} \\cdot \\frac{0.6}{8}, \\qquad p_{\\mathrm{c}} = p_{\\mathrm{c}}^{\\mathrm{8B}} \\cdot \\frac{0.6}{8}, \\qquad p_{\\mathrm{out}} = p_{\\mathrm{out}}^{\\mathrm{8B}} \\cdot \\frac{0.6}{8}"],
+    "Открытых цен на Qwen3-0.6B нет: берутся цены Qwen3-8B, пересчитанные по числу параметров.");
+  step("1. Чек запроса", ["v = \\frac{p_{\\mathrm{in}}\\, L(1 - R) + p_{\\mathrm{c}}\\, L R + p_{\\mathrm{out}}\\, O}{10^6}"]);
+  step("2. Время GPU на запрос", [
+    "\\tau = \\tilde a\\, L(1 - R) + \\tilde b\\, O, \\qquad \\tilde a = \\frac{\\sum T_{\\mathrm{pf}}}{\\sum L(1 - R)}, \\qquad T_{\\mathrm{pf}} = a\\, L(1 - R) + b\\, L^2 (1 - R^2) + c",
+    "\\tilde b = \\frac{T_{\\mathrm{dc}}}{B}, \\qquad T_{\\mathrm{dc}} = \\max\\bigl(F,\\ d_0 + d_1 \\bigl(U + \\kappa (\\textstyle\\sum\\ell - U)\\bigr) + d_2 B\\bigr), \\qquad B = \\min(N, B_{\\mathrm{KV}})",
+    "N = \\max \\{ N : \\mathrm{TTFT}_{p90}(N) \\le \\mathrm{TTFT}^{\\mathrm{SLO}},\\ \\mathrm{TPOT}(N) \\le \\mathrm{TPOT}^{\\mathrm{SLO}} \\}",
+  ], "В расчёте τ = 1 / RPS модели «от N» при этом N: первый токен даёт prefill, поэтому decode-часть идёт по O − 1 токену.");
+  step("3. Запросов в час", ["Q = \\frac{3600\\, u}{\\tau}"]);
+  step("4. Выручка в час", [
+    "\\mathrm{Rev} = v\\, Q = \\frac{3600\\, u\\, \\bigl(p_{\\mathrm{in}}\\, \\mathrm{ITPS} + p_{\\mathrm{c}}\\, \\mathrm{ITPS}_{\\text{кэш}} + p_{\\mathrm{out}}\\, \\mathrm{OTPS}\\bigr)}{10^6}",
+    "\\mathrm{ITPS} = \\frac{L(1 - R)}{\\tau}, \\qquad \\mathrm{ITPS}_{\\text{кэш}} = \\frac{L R}{\\tau}, \\qquad \\mathrm{OTPS} = \\frac{O}{\\tau}, \\qquad \\tilde a\\, \\mathrm{ITPS} + \\tilde b\\, \\mathrm{OTPS} = 1",
+  ]);
+  step("5. Прибыль в час", ["\\Pi_{\\text{аренда}} = \\mathrm{Rev} - C_{\\mathrm{rent}}, \\qquad \\Pi_{\\text{своя}} = \\mathrm{Rev} - C_{\\mathrm{el}}, \\qquad C_{\\mathrm{el}} = W \\cdot t_{\\mathrm{el}}"]);
+  step("6. Окупаемость своей карты, дней", ["T_{\\mathrm{pay}} = \\frac{P_{\\mathrm{gpu}}}{24\\, (\\mathrm{Rev} - C_{\\mathrm{el}})}, \\qquad T_{\\mathrm{pay}}(u) = \\frac{P_{\\mathrm{gpu}}}{24\\, (u \\cdot \\mathrm{Rev}_{u=1} - C_{\\mathrm{el}})}"]);
+  parent.append(forms);
+  const g = E.gpu, b = E.base;
+  table(parent, [
+    ["p_{\\mathrm{in}}^{\\mathrm{8B}},\\ p_{\\mathrm{c}}^{\\mathrm{8B}},\\ p_{\\mathrm{out}}^{\\mathrm{8B}}", "цены Qwen3-8B за 1 млн токенов: вход, кэшированный вход, выход", `$${b.input}, $${b.cached_input}, $${b.output}; ${b.source}, ${b.date}`],
+    ["p_{\\mathrm{in}},\\ p_{\\mathrm{c}},\\ p_{\\mathrm{out}}", "те же цены для 0.6B, $ за 1 млн токенов", `$${econRu(E.prices.input, 5)}, $${econRu(E.prices.cached_input, 5)}, $${econRu(E.prices.output, 4)}`],
+    ["v", "чек одного запроса, $", "шаг 1"],
+    ["Q", "запросов в час", "шаг 3"],
+    ["u", "доля времени, когда на GPU есть нагрузка", `${econRu(E.utilization * 100)}% (config.yaml)`],
+    ["\\mathrm{Rev}", "выручка в час, $", "шаг 4"],
+    ["\\Pi", "прибыль в час, $: при аренде карты или со своей картой", "шаг 5"],
+    ["C_{\\mathrm{rent}}", "аренда такой GPU, $ в час", `$${g.rent_per_hour}; ${g.rent_source}`],
+    ["W", "мощность GPU под нагрузкой, кВт", `${g.power_kw}; ${g.power_source}`],
+    ["t_{\\mathrm{el}}", "тариф на электроэнергию, $ за кВт·ч", `$${g.tariff_per_kwh}; ${g.tariff_source}`],
+    ["C_{\\mathrm{el}}", "электроэнергия, $ в час", "шаг 5"],
+    ["P_{\\mathrm{gpu}}", "цена своей карты, $", `$${g.price}; ${g.price_source}`],
+    ["T_{\\mathrm{pay}}", "срок окупаемости своей карты, дней", "шаг 6"],
+    ["T_{\\mathrm{life}}", "срок службы карты", `${g.lifetime_years} года (config.yaml)`],
+  ].map(([tex, what, value]) => ({ tex, what, value })), [
+    { label: "обозначение", value: (r) => `\\(${r.tex}\\)`, text: true },
+    { label: "что это", key: "what", text: true },
+    { label: "значение и источник", key: "value", text: true },
+  ]);
+}
+
+function econRows(sloLabel) {
+  const E = D.local.system.economics;
+  return ECON_ORDER.flatMap((l) => ["on", "off"].map((c) => E.rows.find((r) => r.load === l && r.cache === c && r.slo === sloLabel))).filter(Boolean);
+}
+const econName = (r) => `${ECON_NAME[r.load]}, ${r.cache === "on" ? "с кэшем" : "без кэша"}`;
+
+function econCharts(parent, sloIdx) {
+  const E = D.local.system.economics, slo = E.slo[sloIdx], g = E.gpu;
+  const life = 365 * g.lifetime_years, Cel = E.electricity_per_hour, rows = econRows(slo.label).filter((r) => r.N != null);
+  const style = (r) => ({ color: css(ECON_COLOR[r.load]), width: r.cache === "on" ? 2.5 : 1.5, dash: r.cache === "on" ? "solid" : "dash" });
+  const lifeText = `срок службы ${g.lifetime_years} года`;
+
+  parent.append(el("h3", {}, `Накопленная прибыль своей карты (требование «${slo.label}»)`));
+  let row = chartRow(parent);
+  chart(row, () => {
+    const t = [], ann = [];
+    const days = [0, life * 1.1];
+    let ymin = -g.price, ymax = 0;
+    for (const r of rows) {
+      const slope = 24 * r.profit_own;
+      const ys = days.map((d) => -g.price + slope * d);
+      ymin = Math.min(ymin, ...ys); ymax = Math.max(ymax, ...ys);
+      const label = `${econName(r)} — ${r.payback_days == null ? "не окупается" : `окупится за ${econRu(r.payback_days)} дн.`}`;
+      t.push({ type: "scatter", mode: "lines", name: label, legendgroup: econName(r), x: days, y: ys, line: style(r), hovertemplate: `${econName(r)}<br>день %{x:.0f}: $%{y:,.0f}<extra></extra>` });
+      if (r.payback_days != null && r.payback_days <= life * 1.1) t.push({ type: "scatter", mode: "markers", legendgroup: econName(r), showlegend: false, x: [r.payback_days], y: [0],
+        marker: { color: style(r).color, size: 9, line: { width: 1.5, color: css("--bg") } }, hovertemplate: `${econName(r)}: окупится за %{x:.0f} дн.<extra></extra>` });
+    }
+    ann.push({ x: life, y: 1, yref: "paper", text: lifeText, showarrow: false, xanchor: "right", yanchor: "top", font: { size: 11, color: css("--muted") } });
+    return [t, baseLayout("", "дней работы (24 часа в сутки)", "накопленная прибыль, $", {
+      margin: { l: 72, r: 20, t: 16, b: 56 }, annotations: ann,
+      shapes: [{ type: "line", xref: "x", yref: "paper", x0: life, x1: life, y0: 0, y1: 1, line: { color: css("--muted"), width: 1, dash: "dot" } },
+               { type: "line", xref: "paper", yref: "y", x0: 0, x1: 1, y0: 0, y1: 0, line: { color: css("--fg"), width: 1 } }],
+      yaxis: { ...baseLayout().yaxis, range: [ymin * 1.05, Math.max(ymax * 1.05, g.price * 0.2)], title: { text: "накопленная прибыль, $" } },
+    })];
+  }, true);
+  const paid = rows.filter((r) => r.payback_days != null).sort((a, b) => a.payback_days - b.payback_days);
+  const inLife = paid.filter((r) => r.payback_days <= life);
+  parent.append(el("div", { class: "read" },
+    el("p", {}, el("strong", {}, "Как читать. "), `По x — дни круглосуточной работы, по y — накопленная прибыль своей карты: в день 0 она равна минус цене карты ($${g.price}), дальше растёт на 24·(Rev − C_el) в день. Где линия пересекает ноль (точка на линии) — карта окупилась; срок указан в легенде. Пунктирная вертикаль — ${lifeText}. Сплошные линии — с кэшем префиксов, штриховые — без.`),
+    el("p", {}, el("strong", {}, "Вывод. "), paid.length
+      ? `Быстрее всех окупается «${econName(paid[0])}» — за ${econRu(paid[0].payback_days)} дн. ${inLife.length === paid.length ? "Все нагрузки окупаются в пределах срока службы." : `В пределах срока службы окупаются ${inLife.length} из ${rows.length}; ${rows.length - inLife.length ? `остальные — нет.` : ""}`}`
+      : "Ни одна нагрузка не окупает карту: выручка не покрывает электроэнергию.")));
+
+  parent.append(el("h3", {}, "Срок окупаемости от загрузки GPU"));
+  row = chartRow(parent);
+  chart(row, () => {
+    const t = [], us = Array.from({ length: 91 }, (_, i) => 0.1 + i * 0.01);
+    for (const r of rows) {
+      const rev1 = r.rev / E.utilization;
+      t.push({ type: "scatter", mode: "lines", name: econName(r), x: us.map((u) => u * 100), y: us.map((u) => (u * rev1 > Cel ? g.price / (24 * (u * rev1 - Cel)) : null)), line: style(r),
+        hovertemplate: `${econName(r)}<br>загрузка %{x:.0f}%: %{y:,.0f} дн.<extra></extra>` });
+    }
+    t.push({ type: "scatter", mode: "lines", name: lifeText, x: [10, 100], y: [life, life], line: { color: css("--muted"), width: 1, dash: "dot" }, hoverinfo: "skip" });
+    return [t, baseLayout("", "загрузка u, % времени под нагрузкой", "срок окупаемости, дней (лог. шкала)", {
+      margin: { l: 72, r: 20, t: 16, b: 56 }, xaxis: { ...baseLayout().xaxis, range: [10, 100], title: { text: "загрузка u, % времени под нагрузкой" } },
+      yaxis: { ...baseLayout().yaxis, type: "log", title: { text: "срок окупаемости, дней (лог. шкала)" } },
+    })];
+  }, true);
+  const breakEven = (r) => { const rev1 = r.rev / E.utilization; const u = (g.price / (24 * life) + Cel) / rev1; return u; };
+  const best = rows.map((r) => ({ r, u: breakEven(r) })).sort((a, b) => a.u - b.u)[0];
+  const never = rows.filter((r) => r.rev / E.utilization <= Cel);
+  parent.append(el("div", { class: "read" },
+    el("p", {}, el("strong", {}, "Как читать. "), `По x — доля времени, когда на GPU есть запросы; по y — через сколько дней своя карта окупится при такой загрузке. Ниже пунктира (${lifeText}) — окупается за срок службы. Линия обрывается там, где выручка ниже расхода на электроэнергию: карта не окупается вовсе.`),
+    el("p", {}, el("strong", {}, "Вывод. "), best
+      ? `Окупаемость растёт быстрее, чем падает загрузка: при половинной загрузке срок больше чем вдвое. За срок службы «${econName(best.r)}» окупается начиная с загрузки ${best.u <= 1 ? `${econRu(best.u * 100)}%` : "выше 100% — то есть никогда"}.${never.length ? ` Не окупаются даже при 100%: ${never.map(econName).join(", ")}.` : ""}`
+      : "")));
+}
+
+function econTable(parent, sloLabels) {
+  const rows = sloLabels.flatMap((l) => econRows(l));
+  table(parent, rows, [
+    { label: "нагрузка", value: econName, text: true }, { label: "SLO", key: "slo" },
+    { label: "N", value: (r) => (r.N == null ? "SLO не выполняется" : String(r.N)) },
+    { label: "τ, мс", value: (r) => (r.tau == null ? "—" : econRu(r.tau * 1e3, 1)) },
+    { label: "Q, запросов/ч", value: (r) => econRu(r.Q) },
+    { label: "Rev, $/ч", value: (r) => econRu(r.rev, 3) },
+    { label: "прибыль при аренде, $/ч", value: (r) => econRu(r.profit_rent, 3) },
+    { label: "прибыль своей картой, $/ч", value: (r) => econRu(r.profit_own, 3) },
+    { label: "T_pay, дней", value: (r) => (r.N == null ? "—" : r.payback_days == null ? "не окупается" : econRu(r.payback_days)) },
+  ], rows.length > 12);
+}
+
 function renderEconomics() {
   const E = D.local.system.economics;
   const s = section("Экономика",
-    "Выручка в час = 3600·(цена входа·ITPS новые + цена кэша·ITPS из кэша + цена выхода·OTPS)/10⁶, цены — за 1М токенов; прибыль в час = выручка − стоимость GPU в час; окупаемость = цена GPU / прибыль в час. " +
-    `GPU: ${E.gpu.label}, цена $${E.gpu.price} (${E.gpu.price_source}), стоимость часа $${E.gpu.cost_per_hour} (аренда, ${E.gpu.cost_source}). Цены токенов: ` +
-    E.prices.map((p) => `${p.label} — вход $${p.input}, кэш $${p.cached_input}, выход $${p.output} (${p.source})`).join("; ") + ". Все значения задаются в config.yaml.");
-  const feat = ["S5|upstream_dynamic|on", "W4|upstream_dynamic|on"];
-  const W = D.local.system.workloads;
-  const lines = [];
-  for (const key of feat) {
-    const w = W.find((x) => x.key === key);
-    if (!w) continue;
-    const r = E.rows.find((x) => x.label === w.label && x.prices === E.prices[0].label);
-    const best = E.slo_rows.filter((x) => x.label === w.label && x.prices === E.prices[0].label);
-    lines.push(`${w.label} (${E.prices[0].label}): на потолке модель даёт $${num(r.pred_revenue_per_hour, 3)}/ч выручки и $${num(r.pred_profit_per_hour, 3)}/ч прибыли (замер $${num(r.meas_revenue_per_hour, 3)} и $${num(r.meas_profit_per_hour, 3)}), окупаемость ${r.pred_payback_hours == null ? "— (прибыли нет)" : `${int(r.pred_payback_hours)} ч ≈ ${num(r.pred_payback_hours / 24 / 30, 3)} мес. круглосуточно`}. ` +
-      `При SLO: ${best.map((b) => `${b.slo} — N ${b.N_pred ?? "—"} по модели (замер ${b.N_meas ?? "—"}), $${num(b.revenue_pred, 3)}/ч`).join("; ")}.`);
-  }
-  s.append(el("ul", { class: "notes" }, ...lines.map((t) => el("li", {}, t))));
-  s.append(el("h3", {}, "На потолке RPS: прогноз и замер"));
-  table(s, E.rows, [
-    { label: "вариант", key: "label", text: true }, { label: "цены", key: "prices", text: true },
-    { label: "N модель", key: "N_pred" }, { label: "выручка/ч модель", key: "pred_revenue_per_hour", fmt: (v) => `$${num(v, 3)}` }, { label: "прибыль/ч модель", key: "pred_profit_per_hour", fmt: (v) => `$${num(v, 3)}` },
-    { label: "окупаемость модель, ч", key: "pred_payback_hours", fmt: int },
-    { label: "N замер", key: "N_meas" }, { label: "выручка/ч замер", key: "meas_revenue_per_hour", fmt: (v) => `$${num(v, 3)}` }, { label: "прибыль/ч замер", key: "meas_profit_per_hour", fmt: (v) => `$${num(v, 3)}` },
-    { label: "окупаемость замер, ч", key: "meas_payback_hours", fmt: int },
-  ], true);
-  s.append(el("h3", {}, "Максимум выручки при SLO"));
-  s.append(el("p", { class: "lede" }, "Наибольшее N, при котором TTFT p90 и TPOT (медиана) не выше порогов: " + E.slo.map((x) => `${x.label} — TTFT p90 ≤ ${x.ttft_p90} с, TPOT ≤ ${x.tpot * 1e3} мс`).join("; ") + ". По прогнозу — по кривой N = 1, 2, …; по замеру — среди измеренных N."));
-  table(s, E.slo_rows, [
-    { label: "вариант", key: "label", text: true }, { label: "цены", key: "prices", text: true }, { label: "SLO", key: "slo" },
-    { label: "N модель", key: "N_pred" }, { label: "выручка/ч", key: "revenue_pred", fmt: (v) => (v == null ? "—" : `$${num(v, 3)}`) }, { label: "прибыль/ч", key: "profit_pred", fmt: (v) => (v == null ? "—" : `$${num(v, 3)}`) },
-    { label: "N замер", key: "N_meas" }, { label: "выручка/ч замер", key: "revenue_meas", fmt: (v) => (v == null ? "—" : `$${num(v, 3)}`) }, { label: "прибыль/ч замер", key: "profit_meas", fmt: (v) => (v == null ? "—" : `$${num(v, 3)}`) },
-  ], true);
+    `Расчёт по прогнозу модели «от N» для каждой нагрузки (планировщик dynamic) при трёх требованиях к качеству: ${E.slo.map((x) => `${x.label} — TTFT p90 ≤ ${x.ttft_p90} с, TPOT ≤ ${x.tpot * 1e3} мс`).join("; ")}. Графики — для требования «${E.slo[1].label}». Все параметры задаются в config.yaml.`);
+  econSteps(s);
+  econCharts(s, 1);
+  s.append(el("h3", {}, "Расчёт по нагрузкам и требованиям"));
+  econTable(s, E.slo.map((x) => x.label));
 }
 
 function renderSystemData() {
@@ -1704,44 +1811,10 @@ function renderBrief() {
 
   // 3. Money.
   s = section("Сколько это стоит");
-  const P = E.prices[0];
-  const money = (r) => 3600 * (P.input * r.itps_new + P.cached_input * (r.itps_full - r.itps_new) + P.output * r.otps) / 1e6;
-  const cur = E.slo[briefState.slo];
-  const meets = (r) => r.ttft_p90 <= cur.ttft_p90 && r.tpot <= cur.tpot;
   briefSeg(s, E.slo.map((x, i) => [i, `${x.label}: ≤ ${x.ttft_p90} с, ≥ ${ru(1 / x.tpot)} ток/с`]), briefState.slo, (v) => { briefState.slo = v; }, "требование к качеству");
-  row = chartRow(s);
-  chart(row, () => {
-    const t = [];
-    for (const w of loads()) {
-      const c = color(w), cv = w.curve[ch], ok = cv.filter(meets).slice(-1)[0];
-      t.push({ type: "scatter", mode: "lines", name: BRIEF_NAME[w.load], legendgroup: w.load, x: cv.map((r) => r.N), y: cv.map(money), line: { color: c, width: 2.5 },
-        hovertemplate: `${BRIEF_NAME[w.load]} · прогноз<br>N %{x}<br>$%{y:.2f} в час<extra></extra>` });
-      if (ok) t.push({ type: "scatter", mode: "markers", legendgroup: w.load, showlegend: false, x: [ok.N], y: [money(ok)], marker: { color: c, size: 13, symbol: BRIEF_SYMBOL[w.load], line: { width: 2, color: css("--bg") } },
-        hovertemplate: `${BRIEF_NAME[w.load]}: максимум при «${cur.label}»<br>N %{x}, $%{y:.2f} в час<extra></extra>` });
-    }
-    const top = Math.max(...loads().flatMap((w) => w.curve[ch].map((r) => r.N)));
-    t.push({ type: "scatter", mode: "lines", name: `аренда GPU $${E.gpu.cost_per_hour}/ч`, x: [1, top], y: [E.gpu.cost_per_hour, E.gpu.cost_per_hour], line: { color: css("--muted"), width: 1.5, dash: "dash" }, hoverinfo: "skip" });
-    t.push({ type: "scatter", mode: "markers", name: `крупная точка — максимум при «${cur.label}»`, x: [null], y: [null], marker: { color: css("--muted"), size: 12 } });
-    const xt = "N — пользователей одновременно (лог. шкала)";
-    return [t, baseLayout("", xt, "выручка, $ в час", { margin: { l: 64, r: 20, t: 16, b: 56 }, xaxis: { ...baseLayout().xaxis, type: "log", title: { text: xt } } })];
-  }, true);
-  const rows = loads().map((w) => {
-    const ok = w.curve[ch].filter(meets).slice(-1)[0], okm = pts(w).filter(meets).slice(-1)[0];
-    const profit = ok ? money(ok) - E.gpu.cost_per_hour : null;
-    return { w, ok, okm, profit, days: profit > 0 ? E.gpu.price / profit / 24 : null };
-  });
-  const good = rows.filter((r) => r.ok).sort((a, b) => money(b.ok) - money(a.ok));
-  briefRead(s, `Линия — сколько нагрузка приносит в час при данном N по открытым ценам API. Крупная точка — самое большое N, при котором ещё выполняется требование «${cur.label}» (первый токен не дольше ${cur.ttft_p90} с у 90% запросов, поток не меньше ${ru(1 / cur.tpot)} ток/с). Пунктир — аренда такой GPU.`,
-    good.length ? `Выручка растёт до предела памяти и дальше стоит. При требовании «${cur.label}» больше всего приносит «${BRIEF_NAME[good[0].w.load]}»: $${ru(money(good[0].ok), 2)} в час при N = ${good[0].ok.N}, в ${ru(money(good[0].ok) / E.gpu.cost_per_hour)} раз больше аренды; своя RTX 4070 окупится за ${ru(good[0].days, 1)} дня круглосуточной работы. Меньше всего — «${BRIEF_NAME[good[good.length - 1].w.load]}»: $${ru(money(good[good.length - 1].ok), 2)} в час.` : "При этом требовании ни одна нагрузка его не выполняет.");
-  table(s, rows, [
-    { label: "нагрузка", value: (r) => BRIEF_NAME[r.w.load], text: true },
-    { label: "N при требовании", value: (r) => (r.ok ? String(r.ok.N) : "не выполняется") },
-    { label: "выручка, $/ч", value: (r) => (r.ok ? ru(money(r.ok), 2) : "—") },
-    { label: "прибыль, $/ч", value: (r) => (r.profit != null ? ru(r.profit, 2) : "—") },
-    { label: "окупаемость GPU, дней", value: (r) => (r.days != null ? ru(r.days, 1) : "—") },
-    { label: "замер: N и $/ч", value: (r) => (r.okm ? `${r.okm.N} · ${ru(money(r.okm), 2)}` : "—") },
-  ]);
-  s.append(el("p", { class: "lede" }, `Цены: ${P.label} — вход $${P.input}, кэш $${P.cached_input}, выход $${P.output} за 1 млн токенов (${P.source}). GPU $${E.gpu.price} (${E.gpu.price_source}), аренда $${E.gpu.cost_per_hour}/ч (${E.gpu.cost_source}). Работа 24 часа в сутки с постоянной нагрузкой N.`));
+  econSteps(s);
+  econCharts(s, briefState.slo);
+  econTable(s, [E.slo[briefState.slo].label]);
 
   // 4. Accuracy.
   s = section("Насколько верить",

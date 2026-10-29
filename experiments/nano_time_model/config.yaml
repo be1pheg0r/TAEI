@@ -24,24 +24,28 @@ windows: # ITPS–OTPS by time windows inside runs (section 03)
   seconds: 5.0
   min_steps: 5 # windows with fewer steps are dropped
 
-economics: # prices per 1M tokens; checked 2026-10-29
-  prices:
-    - label: Fireworks AI, serverless < 4B
-      input: 0.10
-      cached_input: 0.10 # no separate cached rate listed for this tier
-      output: 0.10
-      source: https://fireworks.ai/pricing (через https://www.costbench.com/software/llm-api-providers/fireworks-ai/), 2026-10-29
-    - label: Price Per Token, Qwen3-0.6B
-      input: 0.20
-      cached_input: 0.10
+economics: # steps of the GPU economics (report: «Экономика: шаги расчёта»)
+  prices: # $ per 1M tokens of Qwen3-0.6B = prices of Qwen3-8B × 0.6 / 8
+    base:
+      model: Qwen3-8B
+      input: 0.05
+      cached_input: 0.05
       output: 0.20
-      source: https://pricepertoken.com/pricing-page/model/qwen-qwen3-0.6b, 2026-10-29
+      source: https://pricepertoken.com/pricing-page/model/qwen-qwen3-8b
+      date: 2026-06-30
+    scale: 0.075 # 0.6 / 8, by the number of parameters
   gpu:
     label: RTX 4070 (настольная, у ноутбучной нет отдельной цены)
-    price: 599 # USD, launch MSRP
+    price: 599 # P_gpu, USD, launch MSRP
     price_source: https://www.gamespot.com/articles/nvidia-geforce-rtx-4070-will-retail-at-599-report/1100-6512871/
-    cost_per_hour: 0.16 # USD, rental of one RTX 4070
-    cost_source: https://vast.ai/pricing/gpu/RTX-4070, 2026-10-29
+    rent_per_hour: 0.16 # C_rent, USD per hour of one RTX 4070
+    rent_source: https://vast.ai/pricing/gpu/RTX-4070, 2026-10-29
+    power_kw: 0.068 # median GPU power under load, own telemetry of phase D (S8)
+    power_source: телеметрия nvidia-smi фазы D, медиана при загрузке GPU > 50%
+    tariff_per_kwh: 0.182 # USD, US residential average, EIA STEO forecast for 2026
+    tariff_source: https://www.eia.gov/outlooks/steo/report/elec_coal_renew.php
+    lifetime_years: 3 # service life of the card
+  utilization: 1.0 # u, share of time under load
   slo: # TTFT p90 and TPOT (median), seconds
     - {label: интерактив, ttft_p90: 0.5, tpot: 0.03}
     - {label: чат, ttft_p90: 1.0, tpot: 0.05}
