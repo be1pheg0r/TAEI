@@ -1918,9 +1918,32 @@ function renderDeck() {
   const wl = loads().find((w) => w.load === deckState.load) || loads()[0];
   const cv = wl.curve[ch], knee = cv.filter((r) => r.N <= wl.knee_pred).slice(-1)[0];
 
-  // 1. Prefill of one request.
-  s = section("Сколько GPU обрабатывает промпт одного запроса");
+  // 1. ITPS and OTPS by the number of clients.
+  s = section(`Сколько сервер обрабатывает за секунду: ${DECK_LABEL[wl.load]}`);
   let row = chartRow(s);
+  const showN = [...new Set([1, 4, 16, knee.N, cv[cv.length - 1].N])].filter((n) => cv.some((r) => r.N === n)).sort((a, b) => a - b);
+  chart(row, () => {
+    const t = [];
+    let xm = 0, ym = 0;
+    showN.forEach((n, i) => {
+      const r = cv.find((x) => x.N === n), c = seqColor(i, showN.length), xi = 1 / r.a_tilde, yo = 1 / r.b_tilde;
+      t.push({ type: "scatter", mode: "lines+text", name: `${n} клиент(ов)${n === knee.N ? " — предел памяти" : ""}`, x: [xi, 0], y: [0, yo], text: ["", `N ${n}`], textposition: "middle right",
+        textfont: { size: 11, color: c }, line: { color: c, width: 2 }, hovertemplate: `N ${n}: только вход — %{x:,.0f}, только выход — %{y:,.0f} ток/с<extra></extra>` });
+      t.push({ type: "scatter", mode: "markers", showlegend: false, x: [r.itps_new], y: [r.otps], marker: { color: c, size: 14, symbol: "x-thin-open", line: { width: 3, color: c } }, hovertemplate: `N ${n} · прогноз: ITPS %{x:,.0f}, OTPS %{y:,.0f}<extra></extra>` });
+      const m = wl.points.find((p) => p.N === n);
+      if (m) t.push({ type: "scatter", mode: "markers", showlegend: false, x: [m.itps_new], y: [m.otps], marker: { color: c, size: 9, line: { width: 1, color: css("--bg") } }, hovertemplate: `N ${n} · замер: ITPS %{x:,.0f}, OTPS %{y:,.0f}<extra></extra>` });
+      xm = Math.max(xm, xi); ym = Math.max(ym, yo);
+    });
+    t.push({ type: "scatter", mode: "markers", name: "крест — прогноз, точка — замер", x: [null], y: [null], marker: { color: css("--muted"), size: 12, symbol: "x-thin-open", line: { width: 3, color: css("--muted") } } });
+    return [t, lay("ITPS, входных токенов в секунду", "OTPS, выходных токенов в секунду", {
+      xaxis: { ...baseLayout().xaxis, range: [0, xm * 1.05], title: { text: "ITPS, входных токенов в секунду" } }, yaxis: { ...baseLayout().yaxis, range: [0, ym * 1.1], title: { text: "OTPS, выходных токенов в секунду" } } })];
+  }, true);
+  const r1 = cv[0];
+  cap(s, `Линия при данном числе клиентов N — все сочетания входных (ITPS) и выходных (OTPS) токенов в секунду, которые GPU успевает обработать: на оси x — если бы запросы были только промптами, на оси y — только ответами. Крест — где окажется этот тип запросов (прогноз), точка — замер. С ростом N линия отходит от нуля: при 1 клиенте выход — до ${int(1 / r1.b_tilde)} ток/с, при ${knee.N} — до ${int(1 / knee.b_tilde)}. После предела памяти линия не двигается.`);
+
+  // 2. Prefill of one request.
+  s = section("Сколько GPU обрабатывает промпт одного запроса");
+  row = chartRow(s);
   chart(row, () => {
     // One point is an outlier: a 769-token prompt fully cached, a step ~25× its neighbours.
     const single = Lc.prefill_grid.points.filter((r) => r.k === 1 && !r.mixed && !(r.cache === "on" && r.R === 0) && !(r.L === 769 && r.R_target >= 0.97));
@@ -2028,6 +2051,39 @@ function renderDeck() {
     { type: "bar", name: "прибыль со своей картой", x: rows.map((r) => DECK_LABEL[r.load]), y: rows.map((r) => r.profit_own), marker: { color: css("--c3") }, hovertemplate: "%{x}<br>своя: $%{y:.3f}/ч<extra></extra>" },
   ], lay("", "прибыль, $ в час", { barmode: "group", xaxis: { ...baseLayout().xaxis, tickfont: { size: 10, color: css("--muted") } } })], true);
   cap(s, `Аренда стоит $${G.rent_per_hour} в час, своя карта — только электричество ($${ru(Cel, 3)} в час) плюс покупка. При нынешних ценах токенов аренда окупается не для всех типов запросов, своя карта — для всех.`);
+  // 8. Price by client speed and by the number of requests in parallel.
+  s = section(`Цена за 1 млн выходных токенов от скорости и числа параллельных запросов: ${DECK_LABEL[wl.load]}`);
+  row = chartRow(s);
+  big(chart(row, () => {
+    const t = [], marks = [1, 2, 4, 8, 16, knee.N].filter((n, i, a) => a.indexOf(n) === i && cv.some((r) => r.N === n)).sort((a, b) => a - b);
+    let ymax = E.prices.output;
+    [[6, "--c5"], [12, "--c2"], [36, "--c3"]].forEach(([months, cc]) => {
+      const need = G.price / (24 * 30.4 * months) + Cel;
+      const price = (r) => (need * 1e6) / (3600 * (rIn * r.itps_new + rC * (r.itps_full - r.itps_new) + r.otps));
+      const ys = cv.filter((r) => r.N <= knee.N).map(price);
+      ymax = Math.max(ymax, ...ys);
+      const rows = cv.filter((r) => r.N <= knee.N);
+      t.push({ type: "scatter", mode: "lines", name: `окупить за ${months} мес.`, x: rows.map((r) => r.ttps), y: ys, line: { color: css(cc), width: 2.5 },
+        customdata: rows.map((r) => r.N), hovertemplate: `${months} мес.<br>параллельно %{customdata}, клиенту %{x:.0f} ток/с<br>цена $%{y:.4f} за 1 млн<extra></extra>` });
+      const pts = rows.filter((r) => marks.includes(r.N));
+      t.push({ type: "scatter", mode: "markers+text", showlegend: false, x: pts.map((r) => r.ttps), y: pts.map(price), text: pts.map((r) => (months === 12 ? `$${ru(price(r), 3)}` : "")),
+        textposition: "top center", textfont: { size: 10, color: css(cc) }, marker: { color: css(cc), size: 8, line: { width: 1, color: css("--bg") } }, hoverinfo: "skip" });
+    });
+    t.push({ type: "scatter", mode: "lines", name: `рыночная цена $${ru(E.prices.output, 4)}`, x: [15, 90], y: [E.prices.output, E.prices.output], line: { color: css("--muted"), width: 2, dash: "dash" }, hoverinfo: "skip" });
+    t.push({ type: "scatter", x: [null], y: [null], xaxis: "x2", showlegend: false, hoverinfo: "skip" });
+    const at = marks.map((n) => cv.find((r) => r.N === n).ttps);
+    return [t, lay("скорость для клиента, токенов/с", "цена за 1 млн выходных токенов, $", {
+      margin: { l: 72, r: 24, t: 64, b: 56 },
+      legend: { x: 0.02, y: 0.98, xanchor: "left", yanchor: "top", orientation: "v", bgcolor: css("--surface"), bordercolor: css("--line"), borderwidth: 1, font: { size: 11, color: css("--fg") } },
+      xaxis: { ...baseLayout().xaxis, range: [15, 90], title: { text: "скорость для клиента, токенов/с" } },
+      xaxis2: { overlaying: "x", side: "top", range: [15, 90], tickvals: at, ticktext: marks.map(String), tickfont: { size: 12, color: css("--fg") }, showgrid: false, zeroline: false,
+        title: { text: "запросов параллельно (на этих скоростях)", font: { size: 12, color: css("--muted") } } },
+      yaxis: { ...baseLayout().yaxis, range: [0, ymax * 1.08], tickformat: ".3f", title: { text: "цена за 1 млн выходных токенов, $" } },
+      shapes: at.map((x) => ({ type: "line", xref: "x", yref: "paper", x0: x, x1: x, y0: 0, y1: 1, line: { color: css("--line"), width: 1 } })),
+    })];
+  }), 600);
+  const p12 = (n) => { const r = cv.find((x) => x.N === n); return (G.price / (24 * 30.4 * 12) + Cel) * 1e6 / (3600 * (rIn * r.itps_new + rC * (r.itps_full - r.itps_new) + r.otps)); };
+  cap(s, `Нижняя шкала — скорость для клиента, верхняя — сколько запросов сервер обрабатывает параллельно при этой скорости: одна и та же точка читается по обеим. Цены на линии «12 мес.» подписаны у отметок: 1 запрос параллельно — $${ru(p12(1), 3)}, 8 — $${ru(p12(8) || 0, 3)}, ${knee.N} (предел памяти) — $${ru(p12(knee.N), 3)} за 1 млн. Чем больше запросов идёт параллельно, тем ниже нужная цена, но тем медленнее ответ каждому клиенту. Пунктир — рыночная цена.`);
 }
 
 const DECK_PRICE_NOTE = (E) => `как у Qwen3-8B × 0,6/8 (выход $${ru(E.prices.output, 3)} за 1 млн)`;
