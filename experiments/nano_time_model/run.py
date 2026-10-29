@@ -42,8 +42,8 @@ def _notes(label, train, transfers, attempts) -> list[str]:
         f"{ratio.min():.2%}…{ratio.max():.2%} от "
         "\\(T^{\\mathrm{wall}}\\): промежутки между шагами и время до и после "
         "цикла моделью не описываются и входят в ошибку \\(T_{\\mathrm{total}}\\).",
-        "Ожидание в TTFT по модели взято из трассы (реальный порядок шагов), "
-        "а не предсказано: модели очереди ещё нет.",
+        "В проверке шага ожидание в TTFT по модели взято из трассы (реальный "
+        "порядок шагов); у локальной 0.6B очередь предсказывает модель «от N».",
     ]
     failed = attempts[attempts["status"] != "success"]
     if len(failed):
@@ -171,12 +171,20 @@ def run(cfg: DictConfig) -> dict:
                 nano_data.subset(train, ev.split["train"]), "workload", False
             )
             labels = {TRAIN_SOURCE: entry.label}
+            system = (
+                OmegaConf.to_container(entry.system) if entry.get("system") else None
+            )
+            if system:
+                for key in ("check_roots", "step_roots"):
+                    system[key] = [REPO / r for r in system[key]]
             local = build_local(
                 ev,
                 [REPO / r for r in entry.local.roots],
                 [REPO / p for p in entry.local.plans],
                 REPO / entry.local.server_runs_dir,
                 labels,
+                system,
+                OmegaConf.to_container(cfg.economics),
             )
             notes += _local_notes(local)
         caveats = {t.label: t.caveat for t in entry.transfer or [] if t.get("caveat")}

@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from . import prices
+from . import prices, system_report
 from .evaluate import Evaluation
 from .split import series_of
 
@@ -384,101 +384,6 @@ def _ttft_by_rank(requests, source, table) -> list[dict]:
     return _records(out)
 
 
-def _request_list(plan, run_ids) -> pd.DataFrame:
-    """L, O and shared prefix of every request of these runs, by arrival."""
-    rows = []
-    for run_id in run_ids:
-        reqs = sorted(
-            plan[run_id]["workload_spec"]["requests"],
-            key=lambda r: r["arrival_offset_ns"],
-        )
-        rows += [{"run_id": run_id, **r} for r in reqs]
-    return pd.DataFrame(rows)
-
-
-def _capacity(ev, plan, source, table, kv_tokens) -> list[dict]:
-    """Saturation throughput by the model for the S4 request mix, per
-    (scheduler, cache), against the rate served at the highest load.
-
-    upstream_dynamic: continuous batching, the decode batch is limited by KV —
-    B = KV tokens / mean(L − C + O/2); a request costs its prefill (step
-    overhead c shared by a full 16 384-token step) and O − 1 decode tokens at
-    d0/B + d2 + d1·ℓ. fixed_batch: waves of 8 in arrival order, the wave runs
-    until its longest request ends (B falls as requests finish). C — shared
-    prefix of the request when the cache is on (its family is primed).
-    """
-    coef = {**ev.prefill.coef, **ev.decode.coef}
-    a, b, c = coef["a"], coef["b"], coef["c"]
-    d0, d1, d2 = coef["d0"], coef["d1"], coef["d2"]
-    runs = ev.runs[ev.runs["source"] == source]
-    top = max(r["rho"] for r in table)
-    out = []
-    rho = {r: plan[r]["workload_spec"]["point"]["rho"] for r in runs["run_id"]}
-    runs = runs.assign(rho=runs["run_id"].map(rho))
-    for (sched, cache), g in runs.groupby(["scheduler", "cache"]):
-        ids = list(g["run_id"])
-        req = _request_list(plan, ids)
-        L, n_out = req["L"].to_numpy(float), req["O"].to_numpy(float)
-        C = (req["prefix_blocks"].to_numpy(float) * 256) if cache == "on" else 0 * L
-        N = L - C
-        if sched == "fixed_batch":
-            total = 0.0
-            for _, r in req.groupby("run_id"):
-                Lr, Or = r["L"].to_numpy(float), r["O"].to_numpy(float)
-                Cr = (
-                    r["prefix_blocks"].to_numpy(float) * 256
-                    if cache == "on"
-                    else 0 * Lr
-                )
-                for i in range(0, len(r), FIXED_WAVE):
-                    w = slice(i, i + FIXED_WAVE)
-                    Nw = (Lr[w] - Cr[w]).sum()
-                    total += a * Nw + b * (Lr[w] ** 2 - Cr[w] ** 2).sum()
-                    total += c * max(np.ceil(Nw / MAX_BATCHED_TOKENS), 1)
-                    for t in range(1, int(Or[w].max())):
-                        live = Or[w] > t
-                        total += d0 + d1 * (Lr[w][live] + t).sum() + d2 * live.sum()
-            capacity, batch = len(req) / total, float(FIXED_WAVE)
-            rate = None
-        else:
-            prefill = a * N + b * (L**2 - C**2) + c * N / MAX_BATCHED_TOKENS
-
-            def rate(batch, prefill=prefill, L=L, n_out=n_out):
-                decode = (n_out - 1) * (d0 / batch + d2 + d1 * L)
-                decode += d1 * (n_out - 1) * n_out / 2
-                return 1 / float((prefill + decode).mean())
-
-            batch = min(256.0, kv_tokens / float((N + n_out / 2).mean()))
-            capacity = rate(batch)
-        row = next(
-            r
-            for r in table
-            if r["rho"] == top and r["scheduler"] == sched and r["cache"] == cache
-        )
-        served = row["achieved_rps"]
-        top_ids = set(g.loc[g["rho"] == top, "run_id"])
-        dc = ev.decode_steps[ev.decode_steps["run_id"].isin(top_ids)]
-        # The same formula with the decode batch seen in the trace: splits the
-        # error into the batch assumption and the step times.
-        at_measured_b = rate(float(dc["B"].mean())) if rate and len(dc) else None
-        out.append(
-            {
-                "scheduler": sched,
-                "cache": cache,
-                "batch": batch,
-                "batch_measured": float(dc["B"].mean()) if len(dc) else None,
-                "stationary_at_top": bool(row["stationary"]),
-                "capacity_hat": capacity,
-                "capacity_hat_measured_b": at_measured_b,
-                "e_measured_b": at_measured_b / served - 1 if at_measured_b else None,
-                "served_at_top": served,
-                "rho_top": top,
-                "e": capacity / served - 1,
-            }
-        )
-    return out
-
-
 def _tpot_split(ev, source, requests) -> list[dict]:
     """TPOT of upstream_dynamic without cache by ρ, split into the request's
     own decode steps and other requests' prefill steps between its first and
@@ -772,15 +677,9 @@ def _closed_loop(ev, source, requests, roots, kv_tokens) -> dict:
                 "rps": 1 / (a_t * new_req + b_t * out_req),
             }
 
-        # Line at the batch seen at the top N, and (continuous batching only)
-        # at the KV-limited batch: KV tokens / mean(own prompt + O/2).
+        # Line at the batch seen in the trace at the top N: a replay check of the
+        # step model, not a prediction (the model "from N" is in ``system``).
         at_top = ceiling(float(top["batch"]), float(top["ell"]))
-        kv_b = kv_tokens / (new_req + out_req / 2)
-        at_kv = (
-            ceiling(min(256.0, kv_b), float(top["ell"]))
-            if sched != "fixed_batch"
-            else None
-        )
         # TTPS–TTFT: log-log slope over N ≥ 2 (−1 for a hyperbola).
         h = g[g["N"] >= 2]
         slope = (
@@ -800,8 +699,6 @@ def _closed_loop(ev, source, requests, roots, kv_tokens) -> dict:
                 "n_kv": int(full["N"].min()) if len(full) else None,
                 "kv_max_top": float(top["kv_max"]),
                 "line_top": at_top,
-                "line_kv": at_kv,
-                "B_kv": kv_b,
                 "e_ceiling": at_top["rps"] / float(top["rps"]) - 1,
                 "ttps_ttft_slope": slope,
                 "R": R,
@@ -846,8 +743,11 @@ def build_local(
     plan_paths: list[str | Path],
     server_runs_dir: str | Path,
     labels: dict[str, str],
+    system: dict | None = None,
+    economics: dict | None = None,
 ) -> dict:
-    """The ``local`` block of the 0.6B local model in the report document."""
+    """The ``local`` block of the 0.6B local model in the report document;
+    with ``system`` (and ``economics``) it carries the model "from N"."""
     plan, plans = _plans(plan_paths)
     attempts = _attempts(roots)
     by_series = {}
@@ -873,13 +773,6 @@ def build_local(
         "mixes": _mixes(ev, plan),
         "arrivals": arrivals,
         "ttft_by_rank": _ttft_by_rank(s4_requests, by_series["S4"], arrivals["table"]),
-        "capacity": _capacity(
-            ev,
-            plan,
-            by_series["S4"],
-            arrivals["table"],
-            conditions["kv_blocks"][0] * conditions["engine"]["kvcache_block_size"],
-        ),
         "tpot_split": _tpot_split(ev, by_series["S4"], s4_requests),
         "server": _server(ev, plan, by_series["S0"], server_runs_dir),
         **(
@@ -894,6 +787,11 @@ def build_local(
                 )
             }
             if "S5" in by_series
+            else {}
+        ),
+        **(
+            {"system": system_report.build(ev, plan, system, economics)}
+            if system
             else {}
         ),
     }

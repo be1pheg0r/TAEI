@@ -24,6 +24,29 @@ windows: # ITPS–OTPS by time windows inside runs (section 03)
   seconds: 5.0
   min_steps: 5 # windows with fewer steps are dropped
 
+economics: # prices per 1M tokens; checked 2026-10-29
+  prices:
+    - label: Fireworks AI, serverless < 4B
+      input: 0.10
+      cached_input: 0.10 # no separate cached rate listed for this tier
+      output: 0.10
+      source: https://fireworks.ai/pricing (через https://www.costbench.com/software/llm-api-providers/fireworks-ai/), 2026-10-29
+    - label: Price Per Token, Qwen3-0.6B
+      input: 0.20
+      cached_input: 0.10
+      output: 0.20
+      source: https://pricepertoken.com/pricing-page/model/qwen-qwen3-0.6b, 2026-10-29
+  gpu:
+    label: RTX 4070 (настольная, у ноутбучной нет отдельной цены)
+    price: 599 # USD, launch MSRP
+    price_source: https://www.gamespot.com/articles/nvidia-geforce-rtx-4070-will-retail-at-599-report/1100-6512871/
+    cost_per_hour: 0.16 # USD, rental of one RTX 4070
+    cost_source: https://vast.ai/pricing/gpu/RTX-4070, 2026-10-29
+  slo: # TTFT p90 and TPOT (median), seconds
+    - {label: интерактив, ttft_p90: 0.5, tpot: 0.03}
+    - {label: чат, ttft_p90: 1.0, tpot: 0.05}
+    - {label: фон, ttft_p90: 3.0, tpot: 0.1}
+
 models: # each model gets its own coefficients, split and transfer checks
   - label: Qwen3-0.6B local
     # Own RTX 4070 Laptop, TP=1, SM 2100 MHz (docs/nano-vllm-local.md).
@@ -46,9 +69,21 @@ models: # each model gets its own coefficients, split and transfer checks
         run_ids: null
         series: [S5]
     local:
-      plans: [data/qwen-3-06b-local/phase_A/plan.json, data/qwen-3-06b-local/phase_B/plan.json, data/qwen-3-06b-local/phase_C/plan.json]
-      roots: [data/qwen-3-06b-local/phase_A/runs, data/qwen-3-06b-local/phase_B/runs, data/qwen-3-06b-local/phase_C/runs]
+      plans: [data/qwen-3-06b-local/phase_A/plan.json, data/qwen-3-06b-local/phase_B/plan.json, data/qwen-3-06b-local/phase_C/plan.json, data/qwen-3-06b-local/phase_D/plan.json]
+      roots: [data/qwen-3-06b-local/phase_A/runs, data/qwen-3-06b-local/phase_B/runs, data/qwen-3-06b-local/phase_C/runs, data/qwen-3-06b-local/phase_D/runs]
       server_runs_dir: data/qwen-3-06b-768/20261025T092821.424493Z-6636be4c/runs
+    system: # the model "from N": prediction of the closed loop from the pool and N only
+      engine: {kv_blocks: 186, block_size: 256, max_num_seqs: 256, max_batched_tokens: 16384, wave: 8}
+      # Decode variants: S2 + S6 fit d and the floor, S7 κ, S3 is the step test.
+      # Phase D grids stay out of the core (S1 + S2), so its check is unchanged.
+      step_roots: [data/qwen-3-06b-local/phase_A/runs, data/qwen-3-06b-local/phase_B/runs, data/qwen-3-06b-local/phase_D/runs]
+      step_series: [S2, S3, S6, S7]
+      check_roots: [data/qwen-3-06b-local/phase_C/runs, data/qwen-3-06b-local/phase_D/runs] # S5 and S8
+      draws: 2000 # random running sets per B
+      seed: 0
+      warmup: 20 # closed-loop protocol of the fixed_batch wave sum
+      measure: 200
+      curve_max_n: 128
   - label: Qwen3-8B long context
     runs_dir: data/qwen-3-8b-768-big/home/scheglovmi/TAEI/outputs/background-runs/20261027T090746.833536Z-9370a1c5/runs
     run_ids: null

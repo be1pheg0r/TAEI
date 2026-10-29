@@ -13,7 +13,8 @@ chunked prefill (C_нарезка = C − C_кэш, R_нарезка); N — т�
 (``recompute_tokens``); L = C + N — длина запроса в KV после шага. У последнего
 куска (шаг выдаёт токен) L совпадает с ``context_tokens_before``, у
 промежуточного — меньше. Для decode-шага берётся текущая длина контекста ℓ
-каждого запроса и число запросов B.
+каждого запроса, число запросов B и U — токены KV шага без повторов общего
+префикса: у запросов одной семьи с кэшем префикс из кэша считается один раз.
 
 I — все токены промптов прогона, включая кэш (``input_tokens``), O — фактически
 выданные токены. В fixed_batch сборщик может потерять вытесненный запрос: тогда
@@ -134,9 +135,36 @@ def _requests(attempt: Path, step_index: dict[str, int]) -> pd.DataFrame:
     return pd.DataFrame(rows).merge(span.reset_index(), on="request_id", how="left")
 
 
+def unique_tokens(
+    contexts: dict[str, int], prefix: dict[str, tuple[str, int]]
+) -> float:
+    """Σℓ of a decode step without repeats of shared prefixes: KV tokens held once.
+
+    ``prefix`` maps a request to (family, prefix tokens taken from the cache).
+    Prefixes of one family are beginnings of one token sequence, so the family
+    holds its longest prefix once and every other prefix is a repeat.
+    """
+    shared: dict[str, list[int]] = {}
+    for rid in contexts:
+        if rid in prefix:
+            family, tokens = prefix[rid]
+            shared.setdefault(family, []).append(tokens)
+    repeats = sum(sum(t) - max(t) for t in shared.values())
+    return float(sum(contexts.values()) - repeats)
+
+
 def load_run(attempt: Path, model: str) -> dict[str, pd.DataFrame | dict]:
     run = json.loads((attempt / "runs.json").read_text())
     run_id = run["run_id"]
+    prefix = (
+        {
+            q["request_id"]: (q["prefix_family_id"], q["prefix_reused_tokens"])
+            for q in _jsonl(attempt / "requests.jsonl")
+            if q.get("prefix_family_id") and q.get("prefix_reused_tokens")
+        }
+        if run["prefix_cache_mode"] == "on"
+        else {}
+    )
     steps = pd.DataFrame(
         [
             {
@@ -147,6 +175,7 @@ def load_run(attempt: Path, model: str) -> dict[str, pd.DataFrame | dict]:
                 "t_end_ns": s["step_host_end_ns"],
                 "B": s["actual_batch_size"],
                 "sum_l": float(sum(s["contexts_before"].values())),
+                "sum_u": unique_tokens(s["contexts_before"], prefix),
             }
             for s in _jsonl(attempt / "steps.jsonl")
         ]

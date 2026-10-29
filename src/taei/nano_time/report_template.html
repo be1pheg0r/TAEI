@@ -395,10 +395,10 @@ function renderLocal() {
 
   // S4: arrivals.
   const A = Lc.arrivals;
-  s = section("Поток запросов: S4 (перенос)",
-    `${A.requests_per_run} запросов на прогон приходят по Пуассону с интенсивностью \\(\\rho\\) от ёмкости ${num(A.capacity_rps, 3)} запросов/с; длины как в prefix_sweep, у запросов 4 семьи общих префиксов. ` +
-    "Ёмкость посчитана до сбора (local_grid._s4) по ценам формулы 5 с коэффициентами фазы A: \\(1 / (\\tilde a \\bar L + \\tilde b \\bar O)\\), \\(\\tilde a\\) — для одного запроса средней длины \\(\\bar L = 2305\\) без кэша (\\(R = 0\\), и в вариантах с кэшем тоже), \\(\\tilde b\\) — для decode-шага с \\(B = 16\\) и \\(\\ell = \\bar L + \\bar O/2\\). Это не измеренный потолок: у fixed_batch батч не больше 8, а с кэшем prefill дешевле, поэтому реальный излом у вариантов разный (ниже). " +
-    "fixed_batch — волнами по 8: новая волна ждёт конца предыдущей. TTFT по модели — предсказанные шаги от прихода запроса до его первого токена по расписанию трассы (ожидание из трассы, модель очереди ещё не построена).");
+  s = section("Приложение Б. Поток запросов S4 (открытый поток, вне постановки «от N»)",
+    `${A.requests_per_run} запросов на прогон приходят по Пуассону с интенсивностью \\(\\rho \\cdot ${num(A.capacity_rps, 3)}\\) запросов/с; ρ — номинальная доля плана фазы B, а не доля измеренной или предсказанной ёмкости; длины как в prefix_sweep, у запросов 4 семьи общих префиксов. ` +
+    `Число ${num(A.capacity_rps, 3)} посчитано до сбора (local_grid._s4) по ценам формулы 5 с коэффициентами фазы A: \\(1 / (\\tilde a \\bar L + \\tilde b \\bar O)\\), \\(\\tilde a\\) — для одного запроса средней длины \\(\\bar L = 2305\\) без кэша (\\(R = 0\\), и в вариантах с кэшем тоже), \\(\\tilde b\\) — для decode-шага с \\(B = 16\\) и \\(\\ell = \\bar L + \\bar O/2\\). Это не измеренный потолок: у fixed_batch батч не больше 8, а с кэшем prefill дешевле, поэтому реальный излом у вариантов разный (ниже). ` +
+    "fixed_batch — волнами по 8: новая волна ждёт конца предыдущей. TTFT по модели — предсказанные шаги от прихода запроса до его первого токена по расписанию трассы (ожидание из трассы). Открытый поток вне постановки «от N»: здесь число запросов в системе не задано, а растёт с очередью.");
   row = chartRow(s);
   const combos = [...new Set(A.table.map((r) => `${r.scheduler}|${r.cache}`))];
   chart(row, () => {
@@ -412,7 +412,7 @@ function renderLocal() {
       traces.push({ type: "scatter", mode: "markers", name: `${sched} · кэш ${cache} · модель`, x: sub.map((r) => r.rho), y: sub.map((r) => r.ttft_hat),
         marker: { color, symbol: schedSymbol(sched) + "-open", size: 12, line: { width: 1.5, color } }, showlegend: false, hoverinfo: "skip" });
     });
-    return [traces, baseLayout("TTFT (медиана) от нагрузки", "ρ — доля пропускной способности по модели", "TTFT, с", { yaxis: { ...baseLayout().yaxis, type: "log", title: { text: "TTFT, с (лог)" } } })];
+    return [traces, baseLayout("TTFT (медиана) от нагрузки", "ρ — номинальная доля плана фазы B", "TTFT, с", { yaxis: { ...baseLayout().yaxis, type: "log", title: { text: "TTFT, с (лог)" } } })];
   }, true);
   chart(row, () => {
     const traces = combos.map((key) => {
@@ -441,7 +441,7 @@ function renderLocal() {
 
   // S0: the server matrix on this GPU.
   const Sv = Lc.server;
-  s = section("Та же нагрузка, что на сервере: S0",
+  s = section("Приложение В. Та же нагрузка, что на сервере: S0",
     `48 прогонов серверной матрицы Qwen3-0.6B (6 наборов × 2 зерна × 4 условия, max_num_seqs = 8) на этой GPU. Здесь прогон в ${num(1 / Sv.ratio_median, 3)} раза быстрее (медиана отношения ${num(Sv.ratio_median, 3)}): TP = 1 без обмена между GPU, ` +
     "своя машина без чужих задач. Ошибка — модели этой GPU без подгонки на S0.");
   row = chartRow(s);
@@ -671,7 +671,7 @@ function s5ByN(key, title, yTitle, model = true) {
 }
 function renderClosedLoop() {
   const CL = D.local.closed_loop, V = CL.variants;
-  const s = section("S5: конкурентность (закрытый цикл)",
+  const s = section("Повтор расписания S5 (проверка шага по трассе)",
     `В системе всё время ровно N запросов: новый подаётся сразу после завершения одного из N. Первые 20 завершённых — прогрев, следующие 200 (60 при N = 1) — замер; хвост, когда новых запросов нет и N убывает, в метрики не входит. ` +
     "Нагрузка — как в S4 (длины 513–4096, выход 16–256, 4 семьи общих префиксов), порядок запросов из пула одинаковый для всех N, 3 повтора с разными пулами (среднее ± std). Набор для переноса: ничего не подбирается, коэффициенты — модели. " +
     "Не снимались fixed_batch с кэшем и N = 48 — бюджет 2,5 ч; N = 1 и N = 24–32 — только у upstream_dynamic.");
@@ -701,7 +701,7 @@ function renderClosedLoop() {
     for (const [sched, cache] of s5Variants()) {
       const sub = s5Rows(sched, cache), color = cacheColor(cache), symbol = schedSymbol(sched);
       const v = V.find((x) => x.scheduler === sched && x.cache === cache);
-      for (const [line, dash, label] of [[v.line_top, s5Line(sched), "B из трассы"], [v.line_kv, "dash", "B по KV"]]) {
+      for (const [line, dash, label] of [[v.line_top, s5Line(sched), "B из трассы"]]) {
         if (!line) continue;
         traces.push({ type: "scatter", mode: "lines", name: `${s5Name(sched, cache)} · прямая, ${label} = ${num(line.B, 3)}`, showlegend: false, x: [0, 1 / line.a_tilde], y: [1 / line.b_tilde, 0],
           line: { color, width: 1, dash }, hovertemplate: `${s5Name(sched, cache)}, ${label} ${num(line.B, 3)}<br>1/ã %{customdata[0]:,.0f}, 1/b̃ %{customdata[1]:,.1f} ток/с<extra></extra>`, customdata: [[1 / line.a_tilde, 1 / line.b_tilde], [1 / line.a_tilde, 1 / line.b_tilde]] });
@@ -715,7 +715,7 @@ function renderClosedLoop() {
       xmax = Math.max(xmax, ...sub.map((r) => r.itps), star * v.new_per_request);
       ymax = Math.max(ymax, ...sub.map((r) => r.otps), star * v.out_per_request);
     }
-    traces.push({ type: "scatter", mode: "lines", name: "прямая модели (пунктир — B по KV)", x: [null], y: [null], line: { color: css("--muted"), width: 1 } });
+    traces.push({ type: "scatter", mode: "lines", name: "прямая модели при B из трассы", x: [null], y: [null], line: { color: css("--muted"), width: 1 } });
     traces.push({ type: "scatter", mode: "markers", name: "потолок по модели", x: [null], y: [null], marker: { color: css("--muted"), symbol: "x-thin-open", size: 14, line: { width: 2.5, color: css("--muted") } } });
     return [traces, baseLayout("ITPS–OTPS по N и прямая модели", "ITPS, новых входных ток/с", "OTPS, выходных ток/с",
       { xaxis: { ...baseLayout().xaxis, range: [0, xmax * 1.25], title: { text: "ITPS, новых входных ток/с" } }, yaxis: { ...baseLayout().yaxis, range: [0, ymax * 1.25], title: { text: "OTPS, выходных ток/с" } } })];
@@ -736,7 +736,6 @@ function renderClosedLoop() {
     { label: "вариант", value: (v) => s5Name(v.scheduler, v.cache), text: true },
     { label: "B из трассы (N max)", value: (v) => num(v.line_top.B, 3) }, { label: "потолок по прямой, зап/с", value: (v) => num(v.line_top.rps, 3) },
     { label: "замер при N max, зап/с", key: "rps_top", fmt: (v) => num(v, 3) }, { label: "ошибка потолка", key: "e_ceiling", fmt: signShort },
-    { label: "B по KV", key: "B_kv", fmt: (v) => num(v, 3) }, { label: "потолок при B по KV, зап/с", value: (v) => (v.line_kv ? num(v.line_kv.rps, 3) : "—") },
     { label: "TTPS–TTFT: наклон в лог-лог (N ≥ 2)", key: "ttps_ttft_slope", fmt: (v) => num(v, 3) },
   ]);
 
@@ -793,20 +792,6 @@ function renderKnee(s) {
       }, true);
     }
   }
-
-  s.append(el("h3", {}, "Излом по модели: предельная пропускная способность"));
-  const top = Math.max(...A.table.map((r) => r.rho));
-  s.append(el("p", { class: "lede" }, `По коэффициентам модели для набора запросов S4 (те же \\(L\\), \\(O\\), общие префиксы). upstream_dynamic: батч decode ограничен KV-кэшем, \\(B = \\text{KV-токены} / \\overline{L - C + O/2}\\); запрос стоит своего prefill (накладные \\(c\\) делятся на полный шаг 16 384 токенов) и \\(O - 1\\) decode-токенов по \\(d_0/B + d_2 + d_1 \\ell\\). ` +
-    `fixed_batch: волны по 8 в порядке прихода, волна идёт до конца самого длинного запроса. Сравнение — с обслуженной интенсивностью при ρ = ${top}; если там ещё стационарно, замер — нижняя граница. ` +
-    "Для upstream_dynamic та же формула ещё раз с батчем из трассы: так видно, какая часть ошибки — от предположения о \\(B\\), а какая — от времени шагов."));
-  table(s, Lc.capacity, [
-    { label: "планировщик", key: "scheduler", text: true }, { label: "кэш", key: "cache" },
-    { label: "B: модель", key: "batch", fmt: (v) => num(v, 3) }, { label: "B: замер (среднее при ρ max)", key: "batch_measured", fmt: (v) => num(v, 3) },
-    { label: "предсказано, зап/с", key: "capacity_hat", fmt: (v) => num(v, 3) }, { label: `замер при ρ = ${top}, зап/с`, key: "served_at_top", fmt: (v) => num(v, 3) },
-    { label: "ошибка", key: "e", fmt: signShort },
-    { label: "модель при B из замера, зап/с", key: "capacity_hat_measured_b", fmt: (v) => num(v, 3) }, { label: "её ошибка", key: "e_measured_b", fmt: signShort },
-    { label: "при ρ max", value: (r) => (r.stationary_at_top ? "ещё стационарно" : "за изломом"), text: true },
-  ]);
 
   const T = Lc.tpot_split || [];
   if (T.length) {
@@ -1006,9 +991,302 @@ function summaryTable() {
   return wrap;
 }
 
+// The model "from N": prediction of the closed loop against S5 and S8.
+const REGION = { below: "ниже колена", above: "выше колена" };
+const METRIC_LABEL = { rps: "RPS", itps_new: "ITPS новые", otps: "OTPS", ttft_p50: "TTFT p50", ttft_p90: "TTFT p90", tpot: "TPOT" };
+const TOKEN_KIND = {
+  new: { label: "новые входные", short: "ITPS новые", rate: (r) => r.itps_new },
+  full: { label: "полный вход (новые + кэш)", short: "ITPS полный", rate: (r) => r.itps_full },
+  all: { label: "все токены (вход + выход)", short: "вход + выход", rate: (r) => r.itps_full + r.otps },
+};
+let sysState = { key: null, kind: "new" };
+const sysVariantColor = (v) => css({ base: "--m2", floor: "--m4", kappa: "--m1" }[v] || "--muted");
+
+function sysButtons(parent, items, current, onPick, label) {
+  const sw = el("div", { class: "switch", role: "group", "aria-label": label });
+  for (const [value, text] of items) {
+    const b = el("button", { type: "button", "aria-pressed": String(value === current) }, text);
+    b.addEventListener("click", () => onPick(value));
+    sw.append(b);
+  }
+  parent.append(sw);
+}
+
+function renderSystem() {
+  const S = D.local.system, V = S.variants, ch = S.choice;
+  const W = S.workloads;
+  sysState.key ??= (W.find((w) => w.key === "S5|upstream_dynamic|on") || W[0]).key;
+
+  // 1. What the model predicts.
+  let s = section("Модель «от N»: что предсказывает",
+    "Модель предсказывает систему, а не шаг. Вход — только то, что известно до запуска: N (запросов в системе одновременно), пул запросов (распределения L, O, семьи и длины префиксов из плана), параметры движка " +
+    `(${S.engine.kv_blocks} блоков KV по ${S.engine.block_size} токенов, max_num_seqs ${S.engine.max_num_seqs}, max_num_batched_tokens ${int(S.engine.max_batched_tokens)}, волна fixed_batch ${S.engine.wave}) и планировщик. ` +
+    "Выход — RPS, ITPS (новые, полный вход), OTPS, TTFT p50 и p90, TPOT и TTPS как функции N. Ни одна величина из трассы во вход не идёт; модель времени шага — кирпич. " +
+    `Проверка — только прогноз против замера на S5 (фазы C и D) и S8 W1–W4: по ним ничего не подбирается. Вариант decode — ${V[ch].label}, выбран по ошибке шага (train и test S3).`);
+  const sum = S.summary.filter((r) => r.variant === ch);
+  const all = (region) => sum.find((r) => r.load === "все" && r.region === region);
+  const tiles = el("div", { class: "tiles" });
+  const tile = (label, value, sub) => tiles.append(el("div", { class: "tile" }, el("span", { class: "label" }, label), el("span", { class: "value" }, value), el("span", { class: "sub" }, sub)));
+  for (const region of ["below", "above"]) {
+    const r = all(region);
+    if (r) tile(`RPS, ${REGION[region]}`, pct(r.rps_abs), `средняя |e| по ${r.points} точкам; TTFT p50 ${pct(r.ttft_p50_abs)}, TPOT ${pct(r.tpot_abs)}`);
+  }
+  const kn = S.special.knee;
+  tile("колено KV", pct(Math.max(...kn.map((k) => Math.abs(k.e)))), `максимум |e| B_KV по ${kn.length} вариантам; медиана ${pct(kn.map((k) => Math.abs(k.e)).sort((a, b) => a - b)[Math.floor(kn.length / 2)])}`);
+  tile("κ", num(S.kappa.value, 3), `цена повторённого токена префикса в decode (1 — как обычный), ${S.kappa.points} попыток S7`);
+  s.append(tiles);
+  s.append(el("h3", {}, `Ошибка прогноза системы (${V[ch].label})`));
+  s.append(el("p", { class: "lede" }, "e = (прогноз − замер)/замер по точкам (N, нагрузка, планировщик, кэш; среднее по повторам). В ячейке — средняя |e| и средний знак. Ниже колена — N не больше колена KV по факту (для fixed_batch — не больше волны), выше — остальные точки."));
+  const cell = (k) => ({ label: METRIC_LABEL[k], value: (r) => (r[`${k}_abs`] == null ? "—" : `${pct(r[`${k}_abs`])} (${signShort(r[`${k}_signed`])})`) });
+  table(s, sum, [
+    { label: "нагрузка", key: "load" }, { label: "область", value: (r) => REGION[r.region], text: true }, { label: "точек", key: "points" },
+    ...["rps", "itps_new", "otps", "ttft_p50", "ttft_p90", "tpot"].map(cell),
+  ]);
+
+  // 2. Final charts per workload.
+  s = section("Итоговые графики: прогноз против замера",
+    "Линия — прогноз модели по N (выбранный вариант decode сплошной, остальные — тонкие, включаются в легенде), точки — замер (среднее по повторам). " +
+    "Все графики ориентированы так, что «лучше» — в одну сторону: вверх и вправо. Вертикальные пунктиры на графиках от N — колено KV по модели и по замеру.");
+  const ctl = el("div", { class: "tiles" });
+  s.append(ctl);
+  const body = el("div", { style: "display:grid;gap:14px" });
+  s.append(body);
+  const drawSys = () => {
+    ctl.replaceChildren();
+    const loads = [...new Set(W.map((w) => w.load))];
+    const pickRow = el("div", { style: "display:grid;gap:8px" });
+    ctl.append(pickRow);
+    for (const load of loads) sysButtons(pickRow, W.filter((w) => w.load === load).map((w) => [w.key, w.label]), sysState.key, (k) => { sysState.key = k; drawSys(); }, `нагрузка ${load}`);
+    sysButtons(pickRow, Object.entries(TOKEN_KIND).map(([k, v]) => [k, `токены: ${v.label}`]), sysState.kind, (k) => { sysState.kind = k; drawSys(); }, "токены");
+    body.replaceChildren();
+    const keep = charts.filter((c) => !body.contains(c.box) && document.body.contains(c.box));
+    charts = keep;
+    renderWorkload(body, W.find((w) => w.key === sysState.key), sysState.kind);
+    if (window.Plotly) for (const c of charts.filter((c) => body.contains(c.box))) { const [t, l] = c.build(); Plotly.react(c.box, t, l, { displaylogo: false, responsive: true }); }
+    if (window.MathJax?.typesetPromise) MathJax.typesetPromise([body]);
+  };
+  drawSys();
+
+  // 3. Economics.
+  renderEconomics();
+
+  // 4. Model: pipeline, coefficients, variants.
+  s = section("Модель: от шага к системе",
+    "Шаг → система. Модель шага (prefill — модель A ядра, decode — вариант ниже) даёт время шага по его составу; модель «от N» строит состав по пулу и N и складывает шаги в метрики системы.");
+  const forms = el("div", { class: "formulas" });
+  const block = (title, text, latex) => forms.append(el("div", { class: "formula-block" }, el("h3", {}, title), text ? el("p", {}, text) : null, ...latex.map((eq) => el("div", { class: "math" }, `\\[${eq}\\]`))));
+  block("1. Работающие запросы", "Набор из B запросов пула с весом по времени жизни (O), у каждого случайный момент жизни \\(k = 0 \\ldots O-1\\); свои блоки целые по 256, общие блоки семьи — самый длинный префикс среди её работающих. Новый запрос принимается, только если свободны блоки на весь его prompt, кроме префикса, который уже держат работающие (can_allocate); в момент отказа свободна в среднем половина нужного ему.",
+    ["\\bar U_{\\mathrm{KV}}(B) + \\tfrac12 \\bar n_{\\text{новый}}(B) = \\text{блоков KV} \\;\\Rightarrow\\; B_{\\mathrm{KV}}, \\qquad B(N) = \\min(N,\\ B_{\\mathrm{KV}},\\ \\text{max\\_num\\_seqs})"]);
+  block("2. Время GPU на запрос и RPS", "Первый токен даёт prefill, остальные \\(O - 1\\) — decode-шаги, каждый обслуживает B запросов; накладные шага prefill \\(c\\) делятся на \\(k = \\max(1, B/\\bar O)\\) новых запросов на шаг.",
+    ["\\tau = \\bar T_{\\mathrm{pf}} + (\\bar O - 1)\\, \\frac{T_{\\mathrm{dc}}(B, \\textstyle\\sum\\ell, U)}{B}, \\qquad \\mathrm{RPS} = 1/\\tau",
+     "\\mathrm{ITPS}_{\\text{новые}} = \\mathrm{RPS}\\,\\overline{L(1-R)}, \\quad \\mathrm{ITPS}_{\\text{полный}} = \\mathrm{RPS}\\,\\bar L, \\quad \\mathrm{OTPS} = \\mathrm{RPS}\\,\\bar O"]);
+  block("3. TPOT, TTPS и TTFT", "TPOT — по закону Литтла для работающих: B = RPS × время decode запроса; в TPOT входят и prefill новых запросов. TTFT — свой prefill-шаг (с k запросами) плюс очередь; новый запрос подаётся между шагами, поэтому текущий шаг он не ждёт.",
+    ["\\mathrm{TPOT} = \\frac{B}{\\mathrm{RPS}\\,(\\bar O - 1)}, \\quad \\mathrm{TTPS} = 1/\\mathrm{TPOT}, \\quad \\mathrm{TTFT}_i = T_{\\mathrm{pf}}^{\\text{шаг}}(i) + \\frac{\\max(0, N - B)}{\\mathrm{RPS}}"]);
+  block("4. Когорты и fixed_batch", "Если у всех запросов пула одинаковые L и O (W1), до колена они идут когортами: когорта из N проходит prefill-шаги по бюджету токенов, затем \\(O - 1\\) шагов при B = N. fixed_batch — волны до 8 запросов подряд по пулу; волна идёт до самого длинного O (B убывает), новый запрос ждёт конца волны; волны считаются подряд с предсказанными шагами.", []);
+  block("5. Прямая бюджета для точки N", "Цены одного запроса этой нагрузки при этом N; точка модели — пересечение прямой с лучом смеси.",
+    ["\\tilde a = \\frac{\\bar T_{\\mathrm{pf}}}{\\overline{L(1-R)}}, \\quad \\tilde b = \\frac{\\tau - \\bar T_{\\mathrm{pf}}}{\\bar O}, \\quad \\tilde a\\,\\mathrm{ITPS} + \\tilde b\\,\\mathrm{OTPS} = 1, \\quad \\frac{\\mathrm{OTPS}}{\\mathrm{ITPS}} = \\frac{\\bar O}{\\overline{L(1-R)}}"]);
+  block("6. Варианты decode", "U — токены KV шага без повторов общего префикса; κ = 1 — повтор стоит как обычный токен, κ = 0 — бесплатен.", Object.values(V).map((v) => v.latex));
+  s.append(forms);
+  s.append(el("p", {}, `Prefill (модель A ядра, train S1 + S2): ${coefText({ a: S.core.a, b: S.core.b, c: S.core.c })}. Ядро до изменений (decode «а» на S1 + S2): ${coefText({ d0: S.core.d0, d1: S.core.d1, d2: S.core.d2 })}.`));
+  table(s, Object.entries(V).map(([k, v]) => ({ k, ...v })), [
+    { label: "вариант", value: (r) => r.label + (r.k === ch ? " — выбран" : ""), text: true },
+    ...["d0", "d1", "d2", "F", "kappa"].map((c) => ({ label: c === "kappa" ? "κ" : c, value: (r) => num(r.coef[c], 4) })),
+  ]);
+  s.append(el("h3", {}, "Выбор варианта: ошибка decode-шага"));
+  s.append(el("p", { class: "lede" }, "Только train (S2, S6, S7 — подбор) и test шага S3. S5 и S8 в выборе не участвуют. Средняя |e| и средний знак по шагам."));
+  const steps = S.step_errors, series = [...new Set(steps.map((r) => r.series))];
+  table(s, series.map((sr) => ({ series: sr, part: steps.find((r) => r.series === sr).part, ...Object.fromEntries(steps.filter((r) => r.series === sr).map((r) => [r.variant, r])) })), [
+    { label: "серия", key: "series" }, { label: "часть", key: "part" },
+    ...Object.keys(V).map((v) => ({ label: V[v].label, value: (r) => (r[v] ? `${pct(r[v].mean_abs)} (${signShort(r[v].mean_signed)})` : "—") })),
+  ]);
+  s.append(el("h3", {}, "Варианты decode на уровне системы (для сравнения, не для выбора)"));
+  table(s, S.summary.filter((r) => r.load === "все"), [
+    { label: "вариант", value: (r) => V[r.variant].label, text: true }, { label: "область", value: (r) => REGION[r.region], text: true }, { label: "точек", key: "points" },
+    ...["rps", "otps", "ttft_p50", "ttft_p90", "tpot"].map(cell),
+  ]);
+  const K = S.kappa;
+  s.append(el("h3", {}, `Цена общего префикса: κ = ${num(K.value, 3)}`));
+  s.append(el("p", { class: "lede" }, `κ подобран вместе с порогом шага F по S7: только попытки с \\(T \\ge ${K.floor_margin} F\\) и долей повторённых токенов \\((\\sum\\ell - U)/\\sum\\ell \\ge ${pct(K.min_shared, 0)}\\) — ${K.points} из ${K.attempts_shared} попыток с повторами. ` +
+    "κ точки — из её T при подобранных d и F; ниже — медиана и квартили по точкам. При 2 запросах на семью κ ≈ 0, с 4 и больше — около 0,4–0,6, разброс по точкам широкий: κ = const — гипотеза."));
+  const factorName = { B: "B", ell: "ℓ", R_target: "R (цель)", families: "семей", per_family: "запросов на семью (B / семей)" };
+  table(s, K.table, [
+    { label: "фактор", value: (r) => factorName[r.factor] ?? r.factor, text: true }, { label: "значение", key: "value" }, { label: "точек", key: "points" },
+    { label: "κ, медиана", key: "median", fmt: (v) => num(v, 3) }, { label: "Q1", key: "q1", fmt: (v) => num(v, 3) }, { label: "Q3", key: "q3", fmt: (v) => num(v, 3) },
+  ]);
+  s.append(el("h3", {}, "Колено, потолок и очередь"));
+  const row = chartRow(s);
+  table(row, kn, [
+    { label: "вариант", key: "label", text: true }, { label: "B_KV модель", key: "pred", fmt: (v) => num(v, 3) },
+    { label: "колено замер", key: "fact", fmt: (v) => num(v, 3) }, { label: "e", key: "e", fmt: signShort },
+  ]);
+  table(row, S.special.ceiling, [
+    { label: "вариант", key: "label", text: true }, { label: "N max", key: "N" }, { label: "RPS замер", key: "meas", fmt: (v) => num(v, 3) },
+    ...Object.keys(V).map((v) => ({ label: `e ${V[v].label}`, key: `e_${v}`, fmt: signShort })),
+  ]);
+  const Q = S.special.queue;
+  if (Q.length) {
+    s.append(el("p", { class: "lede" }, "Очередь в TTFT выше колена: замер — среднее время от подачи до первого планирования запроса, модель — (N − B)/RPS."));
+    table(s, Q, [
+      { label: "вариант", key: "label", text: true }, { label: "N", key: "N" }, { label: "очередь замер, с", key: "meas", fmt: (v) => num(v, 3) },
+      { label: "модель, с", key: `pred_${ch}`, fmt: (v) => num(v, 3) }, { label: "e", key: `e_${ch}`, fmt: signShort },
+    ], true);
+  }
+
+  // 5. Data.
+  renderSystemData();
+
+  // 6. Limits.
+  s = section("Ограничения модели «от N»");
+  s.append(el("ul", { class: "notes" }, ...S.limits.map((n) => el("li", {}, n))));
+}
+
+function renderWorkload(parent, w, kind) {
+  const S = D.local.system, V = S.variants, ch = S.choice, K = TOKEN_KIND[kind];
+  const pts = w.points, curve = w.curve;
+  parent.append(el("p", {}, el("strong", {}, w.label), ` — ${w.load_label}. Пул ${w.pool.requests} запросов × ${w.pool.seeds} сида: \\(\\bar L = ${int(w.pool.L_mean)}\\), \\(\\bar O = ${int(w.pool.O_mean)}\\), \\(R = ${num(w.pool.R, 3)}\\)` +
+    (w.pool.uniform ? "; все L и O одинаковые — до колена запросы идут когортами" : "") + ". " +
+    (w.scheduler === "fixed_batch" ? `Волна ${num(w.knee_pred, 2)} запросов.` : `Колено KV: модель ${num(w.knee_pred, 3)}, замер ${w.knee_fact == null ? "— (KV не заполнялся)" : num(w.knee_fact, 3)}.`)));
+  const kneeShapes = () => [[w.knee_pred, "модель"], [w.knee_fact, "замер"]].filter(([x]) => x != null).map(([x], i) => ({ type: "line", xref: "x", yref: "paper", x0: x, x1: x, y0: 0, y1: 1, line: { color: css("--muted"), width: 1, dash: i ? "dot" : "dash" } }));
+  const lines = (key, name, opts = {}) => Object.keys(V).map((v) => ({
+    type: "scatter", mode: "lines", name: `${name} · модель ${V[v].label}`, x: curve[v].map((r) => opts.x ? opts.x(r) : r.N), y: curve[v].map((r) => (typeof key === "function" ? key(r) : r[key])),
+    line: { color: opts.color ?? sysVariantColor(v), width: v === ch ? 2.5 : 1, dash: v === ch ? "solid" : "dot" }, visible: v === ch ? true : "legendonly",
+    hovertemplate: `${name}, ${V[v].label}<br>N %{customdata}<br>%{x:.4g} → %{y:.4g}<extra></extra>`, customdata: curve[v].map((r) => r.N),
+  }));
+  const meas = (key, name, opts = {}) => ({
+    type: "scatter", mode: "markers", name: `${name} · замер`, x: pts.map((p) => opts.x ? opts.x(p) : p.N), y: pts.map((p) => (typeof key === "function" ? key(p) : p[key])),
+    marker: { color: opts.color ?? css("--fg"), size: 9, symbol: pts.map((p) => (p.region === "above" ? "circle-open" : "circle")), line: { width: 1.5, color: opts.color ?? css("--fg") } },
+    text: pts.map((p) => `N ${p.N} (фаза ${p.phase}, ${p.seeds} повт., ${REGION[p.region]})<br>RPS ${num(p.rps, 3)}, прогноз ${num(p.pred[ch].rps, 3)} (${signShort(p.e[ch].rps)})<br>TTFT p50 ${num(p.ttft_p50, 3)} с, прогноз ${num(p.pred[ch].ttft_p50, 3)}<br>TPOT ${num(p.tpot * 1e3, 3)} мс, прогноз ${num(p.pred[ch].tpot * 1e3, 3)}<br>завершений в окне от ${p.completed_min}`),
+    hovertemplate: "%{text}<extra></extra>",
+  });
+  const cap = (text) => parent.append(el("p", { class: "lede" }, text));
+  const nAxis = (extra = {}) => ({ xaxis: { ...baseLayout().xaxis, type: "log", title: { text: "N, запросов в системе (лог)" } }, shapes: kneeShapes(), ...extra });
+
+  parent.append(el("h3", {}, "Метрики от N"));
+  cap(`На осях — N (лог) и метрика. Сплошная — прогноз, точки — замер (полые — выше колена). ${w.caption.metrics}`);
+  let row = chartRow(parent);
+  chart(row, () => [[...lines("rps", "RPS"), meas("rps", "RPS")], baseLayout("RPS от N", "N", "RPS, запросов/с", nAxis())], true);
+  chart(row, () => [[...lines("otps", "OTPS", { color: css("--m1") }), meas("otps", "OTPS", { color: css("--m1") }), ...lines(K.rate, K.short, { color: css("--m3") }), meas(K.rate, K.short, { color: css("--m3") })],
+    baseLayout(`OTPS и ${K.short} от N`, "N", "токенов/с", nAxis())], true);
+  row = chartRow(parent);
+  chart(row, () => [[...lines("ttft_p50", "TTFT p50", { color: css("--m1") }), meas("ttft_p50", "TTFT p50", { color: css("--m1") }), ...lines("ttft_p90", "TTFT p90", { color: css("--m4") }), meas("ttft_p90", "TTFT p90", { color: css("--m4") })],
+    baseLayout("TTFT от N (ниже — лучше)", "N", "TTFT, с (лог)", nAxis({ yaxis: { ...baseLayout().yaxis, type: "log", title: { text: "TTFT, с (лог)" } } }))], true);
+  chart(row, () => [[...lines((r) => r.tpot * 1e3, "TPOT"), meas((p) => p.tpot * 1e3, "TPOT")], baseLayout("TPOT от N (ниже — лучше)", "N", "TPOT, мс", nAxis())], true);
+
+  parent.append(el("h3", {}, `ITPS–OTPS: прямые бюджета по N (${K.label})`));
+  cap(`По оси x — ${K.label}/с, по y — OTPS. Для каждого измеренного N — прямая модели \\(\\tilde a\\,x + \\tilde b\\,\\mathrm{OTPS} = 1\\) с коэффициентами общей модели при этом N; крест — точка модели на луче смеси, круг — замер. ${w.caption.line}`);
+  row = chartRow(parent);
+  chart(row, () => {
+    const traces = [];
+    const Ns = [...new Set(pts.map((p) => p.N))];
+    let xmax = 0, ymax = 0;
+    Ns.forEach((n, i) => {
+      const p = pts.find((q) => q.N === n), r = p.pred[ch], color = seqColor(i, Ns.length);
+      const aKind = kind === "new" ? r.a_tilde : r.a_tilde_full;
+      const ends = kind === "all" ? [[1 / aKind, 0], [1 / r.b_tilde, 1 / r.b_tilde]] : [[1 / aKind, 0], [0, 1 / r.b_tilde]];
+      traces.push({ type: "scatter", mode: "lines", name: `N ${n}`, legendgroup: String(n), x: ends.map((e) => e[0]), y: ends.map((e) => e[1]), line: { color, width: 1 }, hoverinfo: "skip" });
+      traces.push({ type: "scatter", mode: "markers", legendgroup: String(n), showlegend: false, x: [K.rate(r)], y: [r.otps], marker: { color, symbol: "x-thin-open", size: 14, line: { width: 2.5, color } },
+        hovertemplate: `N ${n} · модель<br>x ${num(K.rate(r), 4)}, OTPS ${num(r.otps, 4)}<extra></extra>` });
+      traces.push({ type: "scatter", mode: "markers", legendgroup: String(n), showlegend: false, x: [K.rate(p)], y: [p.otps], marker: { color, size: 9, line: { width: 1, color: css("--bg") } },
+        hovertemplate: `N ${n} · замер<br>x ${num(K.rate(p), 4)}, OTPS ${num(p.otps, 4)}<extra></extra>` });
+      xmax = Math.max(xmax, K.rate(p), K.rate(r)); ymax = Math.max(ymax, p.otps, r.otps);
+    });
+    return [traces, baseLayout("ITPS–OTPS по N", `${K.label}, ток/с`, "OTPS, выходных ток/с", { xaxis: { ...baseLayout().xaxis, range: [0, xmax * 1.6], title: { text: `${K.label}, ток/с` } }, yaxis: { ...baseLayout().yaxis, range: [0, ymax * 1.6], title: { text: "OTPS, выходных ток/с" } } })];
+  }, true);
+
+  parent.append(el("h3", {}, "Пропускная способность GPU от TTPS на пользователя"));
+  cap(`По x — TTPS = 1/TPOT, токенов/с одному пользователю; по y — токены/с всей GPU: OTPS и «${K.short}» (для «все токены» — вход + выход). Точки по N — граница компромисса: правее — быстрее пользователю, выше — больше GPU. ${w.caption.throughput}`);
+  row = chartRow(parent);
+  const total = kind === "all" ? K.rate : (r) => K.rate(r) + r.otps;
+  chart(row, () => [[...lines("otps", "OTPS", { x: (r) => r.ttps, color: css("--m1") }), meas("otps", "OTPS", { x: (p) => 1 / p.tpot, color: css("--m1") }),
+    ...lines(total, `все токены (${K.short}${kind === "all" ? "" : " + выход"})`, { x: (r) => r.ttps, color: css("--m3") }), meas(total, "все токены", { x: (p) => 1 / p.tpot, color: css("--m3") })],
+    baseLayout("Токены/с GPU от TTPS", "TTPS, ток/с на пользователя", "токенов/с всей GPU")], true);
+
+  parent.append(el("h3", {}, "TTPS–TTFT"));
+  cap(`По x — TTFT p50 (лог, ось развёрнута: правее — меньше ждать), по y — TTPS. ${w.caption.ttft}`);
+  row = chartRow(parent);
+  chart(row, () => [[...lines("ttps", "TTPS", { x: (r) => r.ttft_p50 }), meas((p) => 1 / p.tpot, "TTPS", { x: (p) => p.ttft_p50 })],
+    baseLayout("TTPS от TTFT p50", "TTFT p50, с", "TTPS, ток/с", { xaxis: { ...baseLayout().xaxis, type: "log", autorange: "reversed", title: { text: "TTFT p50, с (лог, развёрнута)" } } })], true);
+  table(parent, pts, [
+    { label: "N", key: "N" }, { label: "фаза", key: "phase" }, { label: "повт.", key: "seeds" }, { label: "область", value: (p) => REGION[p.region], text: true },
+    { label: "RPS", value: (p) => `${num(p.rps, 3)} / ${num(p.pred[ch].rps, 3)}` }, { label: "e RPS", value: (p) => signShort(p.e[ch].rps) },
+    { label: "OTPS", value: (p) => `${int(p.otps)} / ${int(p.pred[ch].otps)}` }, { label: "e OTPS", value: (p) => signShort(p.e[ch].otps) },
+    { label: "TTFT p50, с", value: (p) => `${num(p.ttft_p50, 3)} / ${num(p.pred[ch].ttft_p50, 3)}` }, { label: "e", value: (p) => signShort(p.e[ch].ttft_p50) },
+    { label: "TTFT p90, с", value: (p) => `${num(p.ttft_p90, 3)} / ${num(p.pred[ch].ttft_p90, 3)}` }, { label: "e", value: (p) => signShort(p.e[ch].ttft_p90) },
+    { label: "TPOT, мс", value: (p) => `${num(p.tpot * 1e3, 3)} / ${num(p.pred[ch].tpot * 1e3, 3)}` }, { label: "e", value: (p) => signShort(p.e[ch].tpot) },
+  ], true);
+  parent.append(el("p", { class: "lede" }, "В таблице: замер / прогноз."));
+}
+
+function renderEconomics() {
+  const E = D.local.system.economics;
+  const s = section("Экономика",
+    "Выручка в час = 3600·(цена входа·ITPS новые + цена кэша·ITPS из кэша + цена выхода·OTPS)/10⁶, цены — за 1М токенов; прибыль в час = выручка − стоимость GPU в час; окупаемость = цена GPU / прибыль в час. " +
+    `GPU: ${E.gpu.label}, цена $${E.gpu.price} (${E.gpu.price_source}), стоимость часа $${E.gpu.cost_per_hour} (аренда, ${E.gpu.cost_source}). Цены токенов: ` +
+    E.prices.map((p) => `${p.label} — вход $${p.input}, кэш $${p.cached_input}, выход $${p.output} (${p.source})`).join("; ") + ". Все значения задаются в config.yaml.");
+  const feat = ["S5|upstream_dynamic|on", "W4|upstream_dynamic|on"];
+  const W = D.local.system.workloads;
+  const lines = [];
+  for (const key of feat) {
+    const w = W.find((x) => x.key === key);
+    if (!w) continue;
+    const r = E.rows.find((x) => x.label === w.label && x.prices === E.prices[0].label);
+    const best = E.slo_rows.filter((x) => x.label === w.label && x.prices === E.prices[0].label);
+    lines.push(`${w.label} (${E.prices[0].label}): на потолке модель даёт $${num(r.pred_revenue_per_hour, 3)}/ч выручки и $${num(r.pred_profit_per_hour, 3)}/ч прибыли (замер $${num(r.meas_revenue_per_hour, 3)} и $${num(r.meas_profit_per_hour, 3)}), окупаемость ${r.pred_payback_hours == null ? "— (прибыли нет)" : `${int(r.pred_payback_hours)} ч ≈ ${num(r.pred_payback_hours / 24 / 30, 3)} мес. круглосуточно`}. ` +
+      `При SLO: ${best.map((b) => `${b.slo} — N ${b.N_pred ?? "—"} по модели (замер ${b.N_meas ?? "—"}), $${num(b.revenue_pred, 3)}/ч`).join("; ")}.`);
+  }
+  s.append(el("ul", { class: "notes" }, ...lines.map((t) => el("li", {}, t))));
+  s.append(el("h3", {}, "На потолке RPS: прогноз и замер"));
+  table(s, E.rows, [
+    { label: "вариант", key: "label", text: true }, { label: "цены", key: "prices", text: true },
+    { label: "N модель", key: "N_pred" }, { label: "выручка/ч модель", key: "pred_revenue_per_hour", fmt: (v) => `$${num(v, 3)}` }, { label: "прибыль/ч модель", key: "pred_profit_per_hour", fmt: (v) => `$${num(v, 3)}` },
+    { label: "окупаемость модель, ч", key: "pred_payback_hours", fmt: int },
+    { label: "N замер", key: "N_meas" }, { label: "выручка/ч замер", key: "meas_revenue_per_hour", fmt: (v) => `$${num(v, 3)}` }, { label: "прибыль/ч замер", key: "meas_profit_per_hour", fmt: (v) => `$${num(v, 3)}` },
+    { label: "окупаемость замер, ч", key: "meas_payback_hours", fmt: int },
+  ], true);
+  s.append(el("h3", {}, "Максимум выручки при SLO"));
+  s.append(el("p", { class: "lede" }, "Наибольшее N, при котором TTFT p90 и TPOT (медиана) не выше порогов: " + E.slo.map((x) => `${x.label} — TTFT p90 ≤ ${x.ttft_p90} с, TPOT ≤ ${x.tpot * 1e3} мс`).join("; ") + ". По прогнозу — по кривой N = 1, 2, …; по замеру — среди измеренных N."));
+  table(s, E.slo_rows, [
+    { label: "вариант", key: "label", text: true }, { label: "цены", key: "prices", text: true }, { label: "SLO", key: "slo" },
+    { label: "N модель", key: "N_pred" }, { label: "выручка/ч", key: "revenue_pred", fmt: (v) => (v == null ? "—" : `$${num(v, 3)}`) }, { label: "прибыль/ч", key: "profit_pred", fmt: (v) => (v == null ? "—" : `$${num(v, 3)}`) },
+    { label: "N замер", key: "N_meas" }, { label: "выручка/ч замер", key: "revenue_meas", fmt: (v) => (v == null ? "—" : `$${num(v, 3)}`) }, { label: "прибыль/ч замер", key: "profit_meas", fmt: (v) => (v == null ? "—" : `$${num(v, 3)}`) },
+  ], true);
+}
+
+function renderSystemData() {
+  const S = D.local.system, Lc = D.local, c = Lc.conditions;
+  const s = section("Данные",
+    "Четыре фазы сбора на своей GPU (RTX 4070 Laptop, SM 2100 МГц). Роли: train — подбор модели шага, test шага — проверка шага без подгонки, проверка системы — прогноз «от N» против замера.");
+  table(s, S.roles, [
+    { label: "серия", key: "series" }, { label: "фаза", key: "phase" }, { label: "роль", key: "role", text: true }, { label: "что", key: "what", text: true },
+  ]);
+  table(s, c.phases, [
+    { label: "фаза", key: "phase" }, { label: "попыток", key: "attempts", fmt: int }, { label: "успешных", key: "success", fmt: int },
+    { label: "троттлинг", key: "throttled" }, { label: "ошибок", key: "failed" },
+    { label: "серии", value: (r) => Object.entries(r.series_counts).map(([k, v]) => `${k} ${v}`).join(", "), text: true },
+    { label: "часов", key: "hours", fmt: (v) => v.toFixed(2) }, { label: "ГБ", key: "gigabytes", fmt: (v) => v.toFixed(1) },
+  ]);
+  const ref = Lc.reference.stats;
+  s.append(el("p", {}, `REF (реперный прогон): ${ref.map((r) => `${r.phase} — среднее ${num(r.mean, 4)} с, std/mean ${pct(r.std_rel, 2)}`).join("; ")}. Частота SM ${c.sm_clock_min}–${c.sm_clock_max} МГц во всех попытках.`));
+  s.append(el("h3", {}, "Покрытие проверки системы"));
+  table(s, S.workloads.map((w) => ({ label: w.label, Ns: w.points.map((p) => p.N).join(", "), seeds: w.pool.seeds, below: w.points.filter((p) => p.region === "below").length, above: w.points.filter((p) => p.region === "above").length, knee: w.knee_fact })), [
+    { label: "вариант", key: "label", text: true }, { label: "N", key: "Ns", text: true }, { label: "сидов", key: "seeds" },
+    { label: "точек ниже колена", key: "below" }, { label: "выше", key: "above" }, { label: "колено по факту", key: "knee", fmt: (v) => num(v, 3) },
+  ]);
+  s.append(el("h3", {}, "Что пошло не так в фазе D"));
+  s.append(el("ul", { class: "notes" }, ...S.phase_d_issues.map((n) => el("li", {}, n))));
+}
+
 function renderModel() {
   charts = [];
   sectionNo = 0;
+  if (D.local?.system) {
+    renderSystem();
+    section("Приложение А. Проверка шага по трассе",
+      "Дальше — проверка модели времени шага, как в прошлых версиях отчёта: B, Σℓ, порядок шагов и ожидание берутся из трассы, а модель предсказывает время каждого шага. " +
+      "Это проверка кирпича, а не системы; прямая бюджета по трассе здесь — тождество по построению (ã и b̃ взяты из тех же шагов). Открытый поток S4 и серверная матрица S0 — в конце, как есть, без модели «от N».");
+    const sum = summaryTable();
+    if (sum) app.append(sum);
+  }
   const meta = DOC.meta || {};
   const train = (D.sources || []).find((s) => s.role === "train");
   const transfers = (D.sources || []).filter((x) => x.role === "transfer");
@@ -1056,7 +1334,7 @@ function renderModel() {
   // 3. Final charts.
   const L = D.prices.lines.ref;
   const itpsNote = "ITPS везде — только новые (не кэшированные) входные токены: \\(I = \\sum L(1 - R)\\) по prefill-строкам, кэш префиксов и готовый KV своего куска не входят.";
-  s = section("Итоговые графики", D.local
+  s = section(D.local ? "Окна и бюджет по трассе (тождество)" : "Итоговые графики", D.local
     ? `${itpsNote} Семейства прямых по R и по B для этих данных не строятся: train-сетки S1 и S2 синтетические (prefill без decode и decode без новых запросов), поэтому смеси проверяются окнами ниже.`
     : `Прямые \\(\\tilde a \\cdot \\mathrm{ITPS} + \\tilde b \\cdot \\mathrm{OTPS} = 1\\) — по модели для запроса медианной длины \\(L = ${int(L.L)}\\), ` +
       `decode-шага с медианным \\(B = ${num(L.B, 2)}\\) и медианной \\(\\bar\\ell = ${int(L.ell)}\\). Точки — реальные прогоны: \\(\\mathrm{ITPS} = I / T^{\\mathrm{wall}}\\), \\(\\mathrm{OTPS} = O / T^{\\mathrm{wall}}\\); цвет — кэш, форма — планировщик. ` +
@@ -1097,7 +1375,7 @@ function renderModel() {
       { label: "средняя |x + y − 1|", key: "mean_abs_gap", fmt: (v) => pct(v) }, { label: "она же в 30–70%", key: "mean_abs_gap_mid", fmt: (v) => pct(v) },
     ]);
   }
-  s.append(el("p", { class: "lede" }, "Бюджет по модели \\(\\tilde a \\cdot \\mathrm{ITPS} + \\tilde b \\cdot \\mathrm{OTPS} = \\hat T_{\\mathrm{total}} / T^{\\mathrm{wall}} = 1 + e\\); по замеру — \\(\\sum T_s / T^{\\mathrm{wall}}\\), доля времени, когда GPU считает шаги."));
+  s.append(el("p", { class: "lede" }, "Бюджет по модели \\(\\tilde a \\cdot \\mathrm{ITPS} + \\tilde b \\cdot \\mathrm{OTPS} = \\hat T_{\\mathrm{total}} / T^{\\mathrm{wall}} = 1 + e\\); по замеру — \\(\\sum T_s / T^{\\mathrm{wall}}\\), доля времени, когда GPU считает шаги. По трассе это тождество: ã и b̃ взяты из тех же шагов, поэтому прямая — проверка времени шагов, а не прогноз системы."));
   table(s, D.prices.runs.filter((r) => r.part !== "unused"), [
     { label: "прогон", key: "run_id", text: true, mono: true }, { label: "данные", value: (r) => sourceLabel(r.source), text: true },
     { label: "часть", value: (r) => PART_LABEL[r.part] ?? r.part }, { label: "кэш", key: "cache" }, { label: "планировщик", key: "scheduler", text: true },
@@ -1109,7 +1387,7 @@ function renderModel() {
   if (!D.arrivals) s.append(el("p", {}, el("strong", {}, "Во всех прогонах одна нагрузка (запросы приходят разом), поэтому это разброс внутри очереди, а не кривая от нагрузки. Для гиперболы нужны прогоны с разным числом одновременных пользователей.")));
   s.append(el("p", { class: "lede" }, "Замер: \\(\\mathrm{TTFT}\\) = первый токен − постановка в очередь, \\(\\mathrm{TPOT} = (\\text{конец} - \\text{первый токен}) / (O - 1)\\), \\(\\mathrm{TTPS} = 1/\\mathrm{TPOT}\\). " +
     "Модель: TTFT — сумма предсказанных шагов от прихода запроса до шага его первого токена, TPOT — предсказанные шаги после первого токена до последнего, делённые на \\(O - 1\\). " +
-    "Ожидание взято из трассы, а не предсказано: модель очереди ещё не построена. Одна точка — медианы TTFT и TTPS по группе запросов." +
+    "Здесь ожидание взято из трассы, а не предсказано (очередь предсказывает модель «от N» — разделы в начале отчёта). Одна точка — медианы TTFT и TTPS по группе запросов." +
     (D.local?.closed_loop ? " Главная кривая — закрытый цикл S5: в системе ровно N запросов, линии по возрастанию N для каждой пары (планировщик, кэш), подпись — N; модель — та же линия пунктиром с полыми точками. Поток S4 (открытый, за изломом там очередь) — в разделе S4. Остальные группы (train, S3, S0 — все запросы приходят разом) — на отдельном графике." : "")));
   const CL = D.local?.closed_loop;
   const groups = (D.request_groups || []).filter((g) => g.ttps != null);
@@ -1341,7 +1619,7 @@ function renderReport(index) {
   });
   header.append(sw);
   app.append(header);
-  const summary = summaryTable();
+  const summary = D.local?.system ? null : summaryTable();
   if (summary) app.append(summary);
   if (D.caveat) app.append(el("p", { class: "banner" }, el("strong", {}, `${D.label}: ${D.caveat}.`),
     " Сервер общий: состояние машины (частота, чужие задачи) меняется от прогона к прогону, поэтому ошибки здесь — сумма ошибки модели и шума машины. Чистые данные — у Qwen3-0.6B local."));
