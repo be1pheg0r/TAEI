@@ -9,6 +9,7 @@
   --grid: #e9e7e1; --accent: #2a5f9e;
   --part-train: #2a78d6; --part-test: #eb6834; --part-transfer: #1baf7a;
   --m1: #6250d6; --m2: #008300; --m3: #e87ba4; --m4: #e34948;
+  --c1: #2f6fde; --c2: #e07b28; --c3: #15936a; --c4: #8a55d6; --c5: #cf3f5c;
   --div-neg: #2a78d6; --div-mid: #f0efec; --div-pos: #e34948;
   --good: #1f7a3a; --bad: #b3261e;
   --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
@@ -20,6 +21,7 @@
     --grid: #2b2a27; --accent: #7fb0ec;
     --part-train: #3987e5; --part-test: #d95926; --part-transfer: #199e70;
     --m1: #9085e9; --m2: #008300; --m3: #d55181; --m4: #e66767;
+    --c1: #6b9cf0; --c2: #f0a060; --c3: #45c495; --c4: #b18cf0; --c5: #f07890;
     --div-neg: #3987e5; --div-mid: #383835; --div-pos: #e66767;
     --good: #5cbf7a; --bad: #f08a80; color-scheme: dark;
   }
@@ -29,6 +31,7 @@
   --grid: #2b2a27; --accent: #7fb0ec;
   --part-train: #3987e5; --part-test: #d95926; --part-transfer: #199e70;
   --m1: #9085e9; --m2: #008300; --m3: #d55181; --m4: #e66767;
+    --c1: #6b9cf0; --c2: #f0a060; --c3: #45c495; --c4: #b18cf0; --c5: #f07890;
   --div-neg: #3987e5; --div-mid: #383835; --div-pos: #e66767;
   --good: #5cbf7a; --bad: #f08a80; color-scheme: dark;
 }
@@ -88,6 +91,8 @@ td.muted { color: var(--muted); }
 table.summary th, table.summary td { white-space: normal; vertical-align: top; min-width: 10ch; }
 table.summary td strong { font-weight: 600; }
 .banner { max-width: none; padding: 10px 14px; border: 1px solid var(--bad); border-radius: 6px; background: var(--surface); }
+.read { border-left: 3px solid var(--accent); padding-left: 12px; display: grid; gap: 6px; max-width: 76ch; }
+.read p { max-width: none; }
 details > summary { cursor: pointer; color: var(--accent); font-weight: 500; margin: 4px 0 10px; }
 @media (max-width: 520px) { .chart { height: 300px; } .chart.tall { height: 360px; } h1 { font-size: 1.5rem; } }
 </style>
@@ -1598,7 +1603,167 @@ function renderModel() {
   s.append(el("ul", { class: "notes" }, ...(D.notes || []).map((n) => el("li", {}, n))));
 }
 
+// "Коротко": the capacity of one GPU from the model "from N" (the system block of the local model).
+const BRIEF_NAME = { S5: "Чат", W4: "Чат с системным промптом", W1: "Шаблон", W2: "Генерация", W3: "Документы" };
+const BRIEF_ORDER = ["S5", "W4", "W1", "W2", "W3"];
+const BRIEF_COLOR = { S5: "--c1", W4: "--c2", W1: "--c3", W2: "--c4", W3: "--c5" };
+const BRIEF_SYMBOL = { S5: "circle", W4: "diamond", W1: "square", W2: "triangle-up", W3: "cross" };
+let briefState = { cache: "on", slo: 1 };
+const ru = (v, d = 0) => (v == null ? "—" : v.toLocaleString("ru-RU", { maximumFractionDigits: d, minimumFractionDigits: d }));
+const pct0 = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
+
+function briefSystem() {
+  return DOC.models.find((m) => m.local?.system)?.local.system;
+}
+function briefSeg(parent, items, current, pick, label) {
+  const sw = el("div", { class: "switch", role: "group", "aria-label": label });
+  for (const [v, text] of items) {
+    const b = el("button", { type: "button", "aria-pressed": String(v === current) }, text);
+    b.addEventListener("click", () => { if (v !== current) { pick(v); renderReport("brief"); draw(); } });
+    sw.append(b);
+  }
+  parent.append(sw);
+}
+function briefRead(parent, how, what) {
+  parent.append(el("div", { class: "read" }, el("p", {}, el("strong", {}, "Как читать. "), how), el("p", {}, el("strong", {}, "Вывод. "), what)));
+}
+
+function renderBrief() {
+  charts = [];
+  sectionNo = 0;
+  const S = briefSystem(), ch = S.choice, E = S.economics;
+  const acc = Object.fromEntries(S.summary.filter((r) => r.variant === ch && r.load === "все").map((r) => [r.region, r]));
+  const knee = S.special.knee.map((k) => Math.abs(k.e)).sort((a, b) => a - b);
+  const loads = () => BRIEF_ORDER.map((l) => S.workloads.find((w) => w.load === l && w.cache === briefState.cache && w.scheduler === "upstream_dynamic")).filter(Boolean);
+  const pts = (w) => [...w.points].sort((a, b) => a.N - b.N);
+  const atKnee = (rows, w) => rows.filter((r) => r.N <= w.knee_pred).slice(-1)[0] || rows[0];
+  const color = (w) => css(BRIEF_COLOR[w.load]);
+
+  let s = section("Сколько пользователей выдержит одна GPU",
+    "Зная только тип нагрузки и число пользователей, которые одновременно ждут ответа (N), модель заранее говорит, сколько токенов в секунду отдаст GPU и как быстро ответит каждому. RTX 4070 Laptop, Qwen3-0.6B, nano-vLLM.");
+  const tiles = el("div", { class: "tiles" });
+  const tile = (value, sub) => tiles.append(el("div", { class: "tile" }, el("span", { class: "value" }, value), el("span", { class: "sub" }, sub)));
+  tile(`±${pct0(acc.below.rps_abs)}`, "ошибка прогноза пропускной способности (запросов и токенов в секунду), пока память не заполнена");
+  tile(`±${pct0(acc.below.ttft_p90_abs)}`, "ошибка прогноза времени до первого токена (90-й процентиль)");
+  tile(`±${pct0(knee[Math.floor(knee.length / 2)])}`, "ошибка прогноза предела памяти — при каком N GPU перестаёт брать новые запросы в работу");
+  s.append(tiles);
+  briefSeg(s, [["on", "с кэшем префиксов"], ["off", "без кэша"]], briefState.cache, (v) => { briefState.cache = v; }, "кэш префиксов");
+
+  // 1. Input and output tokens the GPU handles.
+  s = section("Что GPU успевает обработать");
+  let row = chartRow(s);
+  chart(row, () => {
+    const t = [], ann = [];
+    for (const w of loads()) {
+      const c = color(w), cut = (r) => r.N <= Math.max(w.knee_pred, 1) * 1.6;
+      const cv = w.curve[ch].filter(cut), ps = pts(w).filter(cut);
+      t.push({ type: "scatter", mode: "lines", name: BRIEF_NAME[w.load], legendgroup: w.load, x: cv.map((r) => r.itps_new), y: cv.map((r) => r.otps), line: { color: c, width: 2.5 },
+        customdata: cv.map((r) => r.N), hovertemplate: `${BRIEF_NAME[w.load]} · прогноз<br>N %{customdata}<br>вход %{x:,.0f}, выход %{y:,.0f} ток/с<extra></extra>` });
+      t.push({ type: "scatter", mode: "markers", legendgroup: w.load, showlegend: false, x: ps.map((r) => r.itps_new), y: ps.map((r) => r.otps),
+        marker: { color: c, size: 9, symbol: BRIEF_SYMBOL[w.load], line: { width: 1, color: css("--bg") } },
+        customdata: ps.map((r) => r.N), hovertemplate: `${BRIEF_NAME[w.load]} · замер<br>N %{customdata}<br>вход %{x:,.0f}, выход %{y:,.0f} ток/с<extra></extra>` });
+      const k = atKnee(w.curve[ch], w);
+      ann.push({ x: k.itps_new, y: k.otps, text: `N ≈ ${Math.round(w.knee_pred)}`, showarrow: true, arrowhead: 0, ax: 18, ay: -22, font: { size: 11, color: c }, arrowcolor: c });
+    }
+    t.push({ type: "scatter", mode: "lines", name: "линия — прогноз", x: [null], y: [null], line: { color: css("--muted"), width: 2.5 } });
+    t.push({ type: "scatter", mode: "markers", name: "точки — замер", x: [null], y: [null], marker: { color: css("--muted"), size: 9 } });
+    return [t, baseLayout("", "входных токенов в секунду (новых, без кэша)", "выходных токенов в секунду", { annotations: ann, margin: { l: 64, r: 20, t: 16, b: 56 } })];
+  }, true);
+  const by = (l) => loads().find((w) => w.load === l);
+  const kc = (l) => atKnee(by(l).curve[ch], by(l));
+  briefRead(s, "Каждая линия — одна нагрузка. Точка на ней — сколько входных (x) и выходных (y) токенов в секунду GPU обрабатывает при данном N. С ростом N точка уходит от нуля: GPU загружается сильнее. На пределе памяти (подпись N ≈ …) рост останавливается: это максимум для этой нагрузки.",
+    `Направление линии задаёт сама нагрузка: «Документы» почти целиком вход (${ru(kc("W3").itps_new)} входных и ${ru(kc("W3").otps)} выходных ток/с), «Генерация» — выход (${ru(kc("W2").otps)} ток/с). «Чат» на пределе даёт ${ru(kc("S5").itps_new)} входных и ${ru(kc("S5").otps)} выходных ток/с при N ≈ ${Math.round(by("S5").knee_pred)}.`);
+
+  // 2. What the user gets.
+  s = section("Что получает пользователь");
+  const slo = E.slo[1];
+  row = chartRow(s);
+  chart(row, () => {
+    const t = [];
+    for (const w of loads()) {
+      const c = color(w), ps = pts(w), cv = w.curve[ch];
+      t.push({ type: "scatter", mode: "lines+markers", name: BRIEF_NAME[w.load], legendgroup: w.load, x: ps.map((r) => r.ttft_p90), y: ps.map((r) => 1 / r.tpot),
+        line: { color: c, width: 2 }, marker: { color: c, size: 8, symbol: BRIEF_SYMBOL[w.load], line: { width: 1, color: css("--bg") } },
+        customdata: ps.map((r) => r.N), hovertemplate: `${BRIEF_NAME[w.load]} · замер<br>N %{customdata}<br>ожидание %{x:.2f} с, поток %{y:.0f} ток/с<extra></extra>` });
+      t.push({ type: "scatter", mode: "lines", legendgroup: w.load, showlegend: false, x: cv.map((r) => r.ttft_p90), y: cv.map((r) => r.ttps), line: { color: c, width: 1.2, dash: "dot" },
+        customdata: cv.map((r) => r.N), hovertemplate: `${BRIEF_NAME[w.load]} · прогноз<br>N %{customdata}<br>ожидание %{x:.2f} с, поток %{y:.0f} ток/с<extra></extra>` });
+    }
+    t.push({ type: "scatter", mode: "lines+markers", name: "линия с точками — замер", x: [null], y: [null], line: { color: css("--muted"), width: 2 }, marker: { color: css("--muted"), size: 8 } });
+    t.push({ type: "scatter", mode: "lines", name: "пунктир — прогноз", x: [null], y: [null], line: { color: css("--muted"), width: 1.2, dash: "dot" } });
+    const xt = "ожидание первого токена, с (90% запросов ждут не дольше; лог. шкала)";
+    return [t, baseLayout("", xt, "скорость потока, токенов/с на пользователя", {
+      margin: { l: 64, r: 20, t: 16, b: 56 },
+      shapes: [{ type: "rect", xref: "x", yref: "y", x0: 0.001, x1: slo.ttft_p90, y0: 1 / slo.tpot, y1: 120, fillcolor: css("--good"), opacity: 0.1, line: { width: 0 }, layer: "below" }],
+      annotations: [{ xref: "x", yref: "y", x: Math.log10(0.018), y: 96, text: `подходит для чата: ждать ≤ ${slo.ttft_p90} с, поток ≥ ${ru(1 / slo.tpot)} ток/с`, showarrow: false, xanchor: "left", yanchor: "top", font: { size: 12, color: css("--good") } }],
+      xaxis: { ...baseLayout().xaxis, type: "log", range: [Math.log10(0.015), Math.log10(30)], title: { text: xt } }, yaxis: { ...baseLayout().yaxis, range: [0, 100], title: { text: "скорость потока, токенов/с на пользователя" } },
+    })];
+  }, true);
+  const chat = pts(by("S5")), c1 = chat[0], ck = chat.filter((r) => r.N <= by("S5").knee_pred).slice(-1)[0], last = chat[chat.length - 1];
+  briefRead(s, "Лучше — вверх и влево: ответ начинается быстро и идёт быстро. Линия с точками — замер, точки по порядку N = 1, 2, 4, …; пунктир того же цвета — прогноз. Зелёная зона — что приемлемо для чата.",
+    `Линии ломаются под прямым углом. Пока память не заполнена, новые пользователи замедляют поток каждому, но ждать первый токен почти не приходится: у «Чата» по замеру поток падает с ${ru(1 / c1.tpot)} до ${ru(1 / ck.tpot)} ток/с от N = 1 до N = ${ck.N}, а ожидание остаётся в пределах ${ru(ck.ttft_p90, 2)} с. После предела поток больше не падает, зато растёт очередь: при N = ${last.N} первый токен ждут ${ru(last.ttft_p90, 1)} с. Рабочая точка — у угла.`);
+
+  // 3. Money.
+  s = section("Сколько это стоит");
+  const P = E.prices[0];
+  const money = (r) => 3600 * (P.input * r.itps_new + P.cached_input * (r.itps_full - r.itps_new) + P.output * r.otps) / 1e6;
+  const cur = E.slo[briefState.slo];
+  const meets = (r) => r.ttft_p90 <= cur.ttft_p90 && r.tpot <= cur.tpot;
+  briefSeg(s, E.slo.map((x, i) => [i, `${x.label}: ≤ ${x.ttft_p90} с, ≥ ${ru(1 / x.tpot)} ток/с`]), briefState.slo, (v) => { briefState.slo = v; }, "требование к качеству");
+  row = chartRow(s);
+  chart(row, () => {
+    const t = [];
+    for (const w of loads()) {
+      const c = color(w), cv = w.curve[ch], ok = cv.filter(meets).slice(-1)[0];
+      t.push({ type: "scatter", mode: "lines", name: BRIEF_NAME[w.load], legendgroup: w.load, x: cv.map((r) => r.N), y: cv.map(money), line: { color: c, width: 2.5 },
+        hovertemplate: `${BRIEF_NAME[w.load]} · прогноз<br>N %{x}<br>$%{y:.2f} в час<extra></extra>` });
+      if (ok) t.push({ type: "scatter", mode: "markers", legendgroup: w.load, showlegend: false, x: [ok.N], y: [money(ok)], marker: { color: c, size: 13, symbol: BRIEF_SYMBOL[w.load], line: { width: 2, color: css("--bg") } },
+        hovertemplate: `${BRIEF_NAME[w.load]}: максимум при «${cur.label}»<br>N %{x}, $%{y:.2f} в час<extra></extra>` });
+    }
+    const top = Math.max(...loads().flatMap((w) => w.curve[ch].map((r) => r.N)));
+    t.push({ type: "scatter", mode: "lines", name: `аренда GPU $${E.gpu.cost_per_hour}/ч`, x: [1, top], y: [E.gpu.cost_per_hour, E.gpu.cost_per_hour], line: { color: css("--muted"), width: 1.5, dash: "dash" }, hoverinfo: "skip" });
+    t.push({ type: "scatter", mode: "markers", name: `крупная точка — максимум при «${cur.label}»`, x: [null], y: [null], marker: { color: css("--muted"), size: 12 } });
+    const xt = "N — пользователей одновременно (лог. шкала)";
+    return [t, baseLayout("", xt, "выручка, $ в час", { margin: { l: 64, r: 20, t: 16, b: 56 }, xaxis: { ...baseLayout().xaxis, type: "log", title: { text: xt } } })];
+  }, true);
+  const rows = loads().map((w) => {
+    const ok = w.curve[ch].filter(meets).slice(-1)[0], okm = pts(w).filter(meets).slice(-1)[0];
+    const profit = ok ? money(ok) - E.gpu.cost_per_hour : null;
+    return { w, ok, okm, profit, days: profit > 0 ? E.gpu.price / profit / 24 : null };
+  });
+  const good = rows.filter((r) => r.ok).sort((a, b) => money(b.ok) - money(a.ok));
+  briefRead(s, `Линия — сколько нагрузка приносит в час при данном N по открытым ценам API. Крупная точка — самое большое N, при котором ещё выполняется требование «${cur.label}» (первый токен не дольше ${cur.ttft_p90} с у 90% запросов, поток не меньше ${ru(1 / cur.tpot)} ток/с). Пунктир — аренда такой GPU.`,
+    good.length ? `Выручка растёт до предела памяти и дальше стоит. При требовании «${cur.label}» больше всего приносит «${BRIEF_NAME[good[0].w.load]}»: $${ru(money(good[0].ok), 2)} в час при N = ${good[0].ok.N}, в ${ru(money(good[0].ok) / E.gpu.cost_per_hour)} раз больше аренды; своя RTX 4070 окупится за ${ru(good[0].days, 1)} дня круглосуточной работы. Меньше всего — «${BRIEF_NAME[good[good.length - 1].w.load]}»: $${ru(money(good[good.length - 1].ok), 2)} в час.` : "При этом требовании ни одна нагрузка его не выполняет.");
+  table(s, rows, [
+    { label: "нагрузка", value: (r) => BRIEF_NAME[r.w.load], text: true },
+    { label: "N при требовании", value: (r) => (r.ok ? String(r.ok.N) : "не выполняется") },
+    { label: "выручка, $/ч", value: (r) => (r.ok ? ru(money(r.ok), 2) : "—") },
+    { label: "прибыль, $/ч", value: (r) => (r.profit != null ? ru(r.profit, 2) : "—") },
+    { label: "окупаемость GPU, дней", value: (r) => (r.days != null ? ru(r.days, 1) : "—") },
+    { label: "замер: N и $/ч", value: (r) => (r.okm ? `${r.okm.N} · ${ru(money(r.okm), 2)}` : "—") },
+  ]);
+  s.append(el("p", { class: "lede" }, `Цены: ${P.label} — вход $${P.input}, кэш $${P.cached_input}, выход $${P.output} за 1 млн токенов (${P.source}). GPU $${E.gpu.price} (${E.gpu.price_source}), аренда $${E.gpu.cost_per_hour}/ч (${E.gpu.cost_source}). Работа 24 часа в сутки с постоянной нагрузкой N.`));
+
+  // 4. Accuracy.
+  s = section("Насколько верить",
+    `Модель подбиралась на отдельных замерах времени одного шага GPU. Прогнозы «от N» с ней сравнили на ${acc.below.points + acc.above.points} точках закрытого цикла, по которым ничего не подбиралось. Ошибка — среднее отклонение прогноза от замера по модулю.`);
+  const names = { rps: "Запросов в секунду", otps: "Выходных токенов в секунду", ttft_p50: "Ожидание первого токена, медиана", ttft_p90: "Ожидание первого токена, 90%", tpot: "Скорость потока" };
+  table(s, Object.entries(names).map(([k, n]) => ({ n, below: acc.below[`${k}_abs`], above: acc.above[`${k}_abs`] })), [
+    { label: "что прогнозируем", key: "n", text: true },
+    { label: `до предела памяти (${acc.below.points} точек)`, key: "below", fmt: (v) => `±${pct0(v)}` },
+    { label: `после (${acc.above.points} точек)`, key: "above", fmt: (v) => `±${pct0(v)}` },
+  ]);
+  s.append(el("ul", { class: "notes" }, ...[
+    "Главная область — до предела памяти. После него GPU вытесняет запросы и пересчитывает их, модель этого не учитывает; сильнее всего это заметно на «Генерации».",
+    "Ожидание первого токена до предела модель считает почти постоянным, а на деле оно немного растёт с N: отсюда ошибка около 15%. После предела модель знает среднюю очередь, но не её разброс, поэтому 90-й процентиль ожидания занижает.",
+    `Для «Документов» с кэшем предел памяти завышен примерно на ${pct0(knee[knee.length - 1])}: на пределе там всего 6 запросов, и каждый занимает до четверти памяти.`,
+    "Всё измерено на одной RTX 4070 Laptop с моделью Qwen3-0.6B. На другой GPU или модели нужны свои замеры шага, формулы те же.",
+  ].map((t) => el("li", {}, t))));
+  s.append(el("p", { class: "lede" }, "Формулы, все проверки и данные — на вкладке Qwen3-0.6B local."));
+}
+
 function renderReport(index) {
+  const brief = index === "brief";
+  if (brief) index = DOC.models.findIndex((m) => m.local?.system);
   D = DOC.models[index];
   app.replaceChildren();
   const meta = DOC.meta || {};
@@ -1608,10 +1773,19 @@ function renderReport(index) {
       `seed=${meta.seed}`, `запуск ${meta.run_dir ?? "—"}`, `формат v${DOC.schema_version}`,
     ].map((t) => el("span", {}, t))));
   const sw = el("div", { class: "switch", role: "group", "aria-label": "Модель" });
-  DOC.models.forEach((m, i) => {
-    const b = el("button", { type: "button", "aria-pressed": String(i === index) }, m.caveat ? `${m.label} · ${m.caveat}` : m.label);
+  if (briefSystem()) {
+    const b = el("button", { type: "button", "aria-pressed": String(brief) }, "Коротко: ёмкость GPU");
     b.addEventListener("click", () => {
-      if (i === index) return;
+      if (brief) return;
+      try { history.replaceState(null, "", "#brief"); } catch (e) { /* the viewer may refuse */ }
+      renderReport("brief"); draw();
+    });
+    sw.append(b);
+  }
+  DOC.models.forEach((m, i) => {
+    const b = el("button", { type: "button", "aria-pressed": String(i === index && !brief) }, m.caveat ? `${m.label} · ${m.caveat}` : m.label);
+    b.addEventListener("click", () => {
+      if (i === index && !brief) return;
       try { history.replaceState(null, "", "#m" + (i + 1)); } catch (e) { /* the viewer may refuse */ }
       renderReport(i); draw();
     });
@@ -1619,6 +1793,7 @@ function renderReport(index) {
   });
   header.append(sw);
   app.append(header);
+  if (brief) { renderBrief(); return; }
   const summary = D.local?.system ? null : summaryTable();
   if (summary) app.append(summary);
   if (D.caveat) app.append(el("p", { class: "banner" }, el("strong", {}, `${D.label}: ${D.caveat}.`),
@@ -1665,7 +1840,7 @@ function draw() {
 }
 // #m2 opens the second model; any other hash opens the first.
 const fromHash = Number((location.hash.match(/^#m(\d+)$/) || [])[1]) - 1;
-if (DOC.kind === "index") { D = DOC; renderIndex(); } else renderReport(fromHash >= 0 && fromHash < DOC.models.length ? fromHash : 0);
+if (DOC.kind === "index") { D = DOC; renderIndex(); } else if (location.hash === "#brief" && briefSystem()) renderReport("brief"); else renderReport(fromHash >= 0 && fromHash < DOC.models.length ? fromHash : 0);
 if (window.Plotly) drawCharts(); else app.prepend(el("p", { class: "neg" }, "Не удалось загрузить Plotly: графики недоступны, таблицы ниже полные."));
 // Redraw with the other theme's tokens when the viewer switches themes.
 const redraw = () => window.Plotly && drawCharts();
