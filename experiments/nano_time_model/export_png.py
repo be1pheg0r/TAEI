@@ -19,15 +19,17 @@ from pathlib import Path
 
 HOOK = r"""
 <script>
-// One bold black local font for slides: titles 24 px, other text 19 px; a local
-// font so Plotly measures legends and margins with the face it draws.
-const BOLD = { family: "Noto Sans", color: "#000", weight: "bold" };
+// Black local font for slides: bold titles (axes, legend, colour bar) 26 px,
+// regular other text 22 px; a local font so Plotly measures legends and margins
+// with the face it draws.
+const TEXT = { family: "Noto Sans", color: "#000", weight: "normal" };
 function boost(o, inTitle = false) {
   if (Array.isArray(o)) return o.forEach((x) => boost(x, inTitle));
   if (!o || typeof o !== "object") return;
   for (const [k, v] of Object.entries(o)) {
     if (/font$/i.test(k) && v && typeof v === "object" && !Array.isArray(v)) {
-      Object.assign(v, BOLD, { size: inTitle ? 24 : 19 });
+      const title = { size: 26, weight: "bold" };
+      Object.assign(v, TEXT, inTitle ? title : { size: 22 });
     } else boost(v, k === "title");
     if (/^[xy]axis\d*$/.test(k) && v) v.automargin = true;
   }
@@ -39,10 +41,22 @@ setTimeout(async () => {
     const sec = box.closest("section");
     const h = sec?.querySelector("h2")?.textContent || "chart";
     const fig = structuredClone({ data: box.data, layout: box.layout });
-    fig.layout.font = { ...fig.layout.font, ...BOLD, size: 19 };
+    fig.layout.font = { ...fig.layout.font, ...TEXT, size: 22 };
+    for (const [k, ax] of Object.entries(fig.layout)) {
+      if (!/^[xy]axis\d*$/.test(k) || !ax?.title) continue;
+      if (typeof ax.title === "string") ax.title = { text: ax.title };
+      ax.title.font ??= {};
+    }
     boost(fig);
-    const lg = fig.layout.legend, top = { x: 0, y: 1.02, yanchor: "bottom" };
-    if (lg?.orientation === "h") Object.assign(lg, top);
+    const lg = fig.layout.legend;
+    // A short legend goes in a row above the plot; a titled one (long entries)
+    // in a column inside the empty top-left corner.
+    if (lg?.orientation === "h" && lg.title?.text) {
+      Object.assign(lg, { orientation: "v", x: 0.01, y: 0.99, yanchor: "top" });
+      Object.assign(lg, { bgcolor: "#fff", bordercolor: "#ccc", borderwidth: 1 });
+    } else if (lg?.orientation === "h") {
+      Object.assign(lg, { x: 0, xanchor: "left", y: 1.02, yanchor: "bottom" });
+    }
     const height = Math.max(700, box.clientHeight * 1.6);
     const opts = { format: "png", width: 1600, height, scale: 3 };
     const url = await Plotly.toImage(fig, opts);
