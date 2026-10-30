@@ -19,15 +19,33 @@ from pathlib import Path
 
 HOOK = r"""
 <script>
+// One bold black local font for slides: titles 24 px, other text 19 px; a local
+// font so Plotly measures legends and margins with the face it draws.
+const BOLD = { family: "Noto Sans", color: "#000", weight: "bold" };
+function boost(o, inTitle = false) {
+  if (Array.isArray(o)) return o.forEach((x) => boost(x, inTitle));
+  if (!o || typeof o !== "object") return;
+  for (const [k, v] of Object.entries(o)) {
+    if (/font$/i.test(k) && v && typeof v === "object" && !Array.isArray(v)) {
+      Object.assign(v, BOLD, { size: inTitle ? 24 : 19 });
+    } else boost(v, k === "title");
+    if (/^[xy]axis\d*$/.test(k) && v) v.automargin = true;
+  }
+}
 setTimeout(async () => {
   const out = [];
   for (const box of document.querySelectorAll(".chart")) {
     if (!box.data) continue;
     const sec = box.closest("section");
     const h = sec?.querySelector("h2")?.textContent || "chart";
-    const height = Math.max(560, box.clientHeight * 1.4);
-    const opts = { format: "png", width: 1400, height, scale: 2 };
-    const url = await Plotly.toImage(box, opts);
+    const fig = structuredClone({ data: box.data, layout: box.layout });
+    fig.layout.font = { ...fig.layout.font, ...BOLD, size: 19 };
+    boost(fig);
+    const lg = fig.layout.legend, top = { x: 0, y: 1.02, yanchor: "bottom" };
+    if (lg?.orientation === "h") Object.assign(lg, top);
+    const height = Math.max(700, box.clientHeight * 1.6);
+    const opts = { format: "png", width: 1600, height, scale: 3 };
+    const url = await Plotly.toImage(fig, opts);
     out.push({ title: h, url });
   }
   const pre = document.createElement("pre");
